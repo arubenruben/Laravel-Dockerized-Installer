@@ -8,6 +8,7 @@ WORKDIR /app
 COPY --from=composer /usr/bin/composer /usr/bin/composer
 # Set the PATH for Composer
 ENV PATH="/root/.composer/vendor/bin:${PATH}"
+
 # Install system dependencies to run a postgresql database
 RUN apt-get update && apt-get install -y git \
     curl \
@@ -30,6 +31,8 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg && \
 # Install Node 24
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y nodejs
+
+RUN composer global require laravel/installer
 
 COPY ./install.sh .
 
