@@ -13,3 +13,6 @@ jobs:
     with:
       image_tag: "latest"
     secrets: inherit
+    permissions:
+      contents: read
+      packages: write
