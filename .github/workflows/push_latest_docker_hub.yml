@@ -1,0 +1,15 @@
+name: "Push Latest Docker Image to Docker Hub"
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-build-push-hub.yml
+    with:
+      image_tag: "latest"
+    secrets: inherit

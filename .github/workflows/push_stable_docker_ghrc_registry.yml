@@ -1,0 +1,13 @@
+name: "Push Stable Docker Image to GHCR Registry"
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      image_tag: "stable"
+    secrets: inherit
