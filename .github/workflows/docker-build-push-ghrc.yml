@@ -23,10 +23,10 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
-          docker build -t ghcr.io/${{ github.repository_owner }}/laravel-installer:${{ inputs.image_tag }} -f laravel/Dockerfile ./laravel
+          docker build -t ghcr.io/${{ github.repository_owner }}/laravel-installer:${{ inputs.image_tag }} ./laravel
           docker push ghcr.io/${{ github.repository_owner }}/laravel-installer:${{ inputs.image_tag }}
 
       - name: Build and Push Nginx Docker Image
         run: |
-          docker build -t ghcr.io/${{ github.repository_owner }}/nginx-laravel-proxy:${{ inputs.image_tag }} -f nginx/Dockerfile ./nginx
+          docker build -t ghcr.io/${{ github.repository_owner }}/nginx-laravel-proxy:${{ inputs.image_tag }} ./nginx
           docker push ghcr.io/${{ github.repository_owner }}/nginx-laravel-proxy:${{ inputs.image_tag }}

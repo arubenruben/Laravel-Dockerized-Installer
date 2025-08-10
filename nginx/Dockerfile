@@ -1,12 +1,12 @@
 FROM nginx:alpine
 
-WORKDIR /etc/nginx
+WORKDIR /etc/nginx/
 
 COPY nginx.conf.template .
 
-COPY init.sh .
+COPY ./init.sh .
 
-RUN chmod +x init.sh
+RUN chmod +x ./init.sh
 
 ENTRYPOINT ["/bin/sh", "-c", "./init.sh"]
 
