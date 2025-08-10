@@ -3,9 +3,9 @@ version: "3"
 services:
   app:
     build:
-      context: .
+      context: ./laravel
     container_name: laravel-installer
-    environment:
-      - APP_NAME=${APP_NAME}
+    env_file:
+      - ./laravel/.env
     volumes:
       - ./out:/app/out
