@@ -9,4 +9,5 @@ envsubst < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 exec /docker-entrypoint.sh
 
 # Run the default command that derives from the CMD instruction in the Dockerfile
-exec "$@"
+#exec "$@"
+exec nginx -g "daemon off;"
