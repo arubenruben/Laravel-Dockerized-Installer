@@ -55,23 +55,4 @@ RUN chmod +x ./prod.sh
 # Copy PHP-FPM configuration
 COPY ./www.conf /usr/local/etc/php-fpm.d/www.conf
 
-# Create Laravel directories if they don't exist
-RUN mkdir -p /var/www/storage/app/public \
-    /var/www/storage/framework/cache \
-    /var/www/storage/framework/sessions \
-    /var/www/storage/framework/testing \
-    /var/www/storage/framework/views \
-    /var/www/storage/logs \
-    /var/www/bootstrap/cache
-
-# Set proper ownership and permissions for Laravel
-RUN chown -R www-data:www-data /var/www && \
-    find /var/www -type f -exec chmod 644 {} \; && \
-    find /var/www -type d -exec chmod 755 {} \; && \
-    chmod -R 775 /var/www/storage && \
-    chmod -R 775 /var/www/bootstrap/cache && \
-    chmod +x /var/www/artisan && \
-    chmod +x /var/www/dev.sh && \
-    chmod +x /var/www/prod.sh
-
 EXPOSE 9000
