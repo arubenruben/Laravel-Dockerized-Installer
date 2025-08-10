@@ -5,7 +5,8 @@ set -e
 
 envsubst < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
-# The default command is to run nginx in the foreground
+# Run this script since it is mentioned as entrypoint for nginx base image
 exec /docker-entrypoint.sh
 
+# Run the default command that derives from the CMD instruction in the Dockerfile
 exec "$@"
