@@ -1,11 +1,11 @@
 # Laravel-Dockerized-Installer (Beta)
-🚢 Install a Fresh Laravel App Without PHP/Node/Composer - The Docker Way!
+🚢 Multi-Service Laravel Development Environment - Powered by Docker!
 
 ## Why This Exists
 
 As a Laravel developer who absolutely **hates** installing PHP, Node.js, and Composer directly on Windows, I created this solution. Why deal with version conflicts, PATH issues, and the general Windows development environment headaches when Docker can handle everything cleanly?
 
-I'm a **Docker stan** 🐳 and believe containerization is the future of development environments. This tool lets you bootstrap Laravel projects without polluting your local machine with dependencies.
+I'm a **Docker stan** 🐳 and believe containerization is the future of development environments. This tool provides a complete Laravel development stack without polluting your local machine with dependencies.
 
 ## ⚠️ Beta Version Notice
 
@@ -13,23 +13,28 @@ This is a **beta version** that currently serves my specific development needs a
 
 If you find bugs or have feature requests, please open an issue!
 
-## What It Does
+## What It Provides
 
-This dockerized installer creates a fresh Laravel application with:
+This dockerized environment offers a complete Laravel development stack with:
 
+### Laravel Installer Service
 - ✅ **Laravel** (latest version)
 - ✅ **React** frontend scaffolding
 - ✅ **PHPUnit** for testing
 - ✅ **NPM** package management
-- ✅ **Laravel Telescope** (development debugging)
-- ✅ **L5-Swagger** (API documentation)
-- ✅ **Laravel Shift Blueprint** (rapid prototyping)
-- ✅ **Laravel Debugbar** (development debugging)
-- ✅ **PHP 8.4** with all necessary extensions
+- ✅ **PHP 8.4** with CLI extensions
 - ✅ **Node.js 24** for modern frontend tooling
-- ✅ **PostgreSQL** and **MySQL** database support
+- ✅ **Composer** for dependency management
+
+### Complete Development Stack
+- 🐳 **Multi-container architecture** (Laravel installer, Nginx, PHP-FPM)
+- 🔧 **Nginx** web server with optimized configuration
+- ⚡ **PHP-FPM 8.4** for production-ready performance
+- 📦 **Modular Dockerfile structure** for easy customization
 
 ## Quick Start
+
+### Option 1: Fresh Laravel Installation (Recommended)
 
 1. **Clone this repository:**
    ```bash
@@ -39,58 +44,144 @@ This dockerized installer creates a fresh Laravel application with:
 
 2. **Set your app name:**
    ```bash
-   cp .env.example .env
-   # Edit .env and set APP_NAME=your-awesome-app
+   # Copy the environment file from the laravel directory
+   cp laravel/.env.example laravel/.env
+   # Edit laravel/.env and set APP_NAME=your-awesome-app
    ```
 
-3. **Run the installer:**
+3. **Run the Laravel installer:**
    ```bash
-   docker-compose up --build
+   # Create the output directory
+   mkdir -p out
+   
+   # Run the installer using the Laravel service directly
+   docker-compose run --rm app
    ```
 
 4. **Find your new Laravel app:**
    Your freshly installed Laravel application will be in the `./out/{APP_NAME}` directory!
 
+### Option 2: Use Pre-built Images
+
+If you prefer to use pre-built images instead of building locally, you can pull them directly:
+
+```bash
+# Pull the Laravel installer
+docker pull ghcr.io/arubenruben/laravel-installer:latest
+
+# Pull supporting services
+docker pull ghcr.io/arubenruben/nginx-laravel-proxy:latest
+docker pull ghcr.io/arubenruben/laravel-php-fpm:latest
+```
+
 ## Docker Images Available
 
-You can also pull pre-built images instead of building locally:
+Pre-built images are available from multiple registries:
 
 ### GitHub Container Registry (GHCR)
+- **Laravel Installer**: `ghcr.io/arubenruben/laravel-installer:latest`
+- **Nginx Proxy**: `ghcr.io/arubenruben/nginx-laravel-proxy:latest`  
+- **PHP-FPM**: `ghcr.io/arubenruben/laravel-php-fpm:latest`
 - **Registry**: [https://github.com/arubenruben?tab=packages](https://github.com/arubenruben?tab=packages)
-- **Usage**: `docker pull ghcr.io/arubenruben/laravel-dockerized-installer:latest`
 
 ### Docker Hub
 - **Registry**: [https://hub.docker.com/u/arubenruben](https://hub.docker.com/u/arubenruben)
-- **Usage**: `docker pull arubenruben/laravel-dockerized-installer:latest`
+- **Usage**: Check the registry for latest available tags
 
 ## Project Structure
 
 ```
 Laravel-Dockerized-Installer/
-├── Dockerfile              # Multi-stage build with PHP 8.4 + Node 24
-├── docker-compose.yml      # Simple service definition
-├── install.sh             # Laravel installation script
-├── .env.example           # Configuration template
-├── out/                   # Output directory for generated apps
-└── .github/workflows/     # CI/CD for automated image builds
+├── docker-compose.yml         # Main orchestration file
+├── laravel/                   # Laravel installer service
+│   ├── Dockerfile            # Laravel + Node.js build environment
+│   ├── install.sh            # Laravel installation script
+│   ├── .env.example          # Configuration template
+│   └── out/                  # Output directory for generated apps
+├── nginx/                    # Nginx web server service
+│   ├── Dockerfile           # Nginx Alpine build
+│   ├── nginx.conf.template  # Nginx configuration template
+│   └── init.sh              # Nginx initialization script  
+├── php-fpm/                 # PHP-FPM application service
+│   ├── Dockerfile          # PHP 8.4-FPM with extensions
+│   ├── www.conf            # FPM pool configuration
+│   ├── dev.sh              # Development setup script
+│   └── prod.sh             # Production setup script
+└── .github/workflows/      # CI/CD for automated image builds
 ```
 
 ## How It Works
 
-1. **Docker Build**: Creates a container with PHP 8.4, Node.js 24, Composer, and Laravel installer
-2. **Fresh Install**: Removes any existing app and creates a completely fresh Laravel installation
-3. **Package Installation**: Automatically installs and configures essential Laravel packages
-4. **Output**: Places the complete Laravel application in your local `./out` directory
+### Multi-Service Architecture
+
+1. **Laravel Installer Service** (`laravel/`):
+   - Builds a container with PHP 8.4 CLI, Node.js 24, Composer, and Laravel installer
+   - Executes the installation script to create a fresh Laravel application
+   - Outputs the complete Laravel project to the local `./out` directory
+
+2. **Nginx Service** (`nginx/`):
+   - Provides a production-ready web server configuration
+   - Serves static assets and proxies PHP requests to PHP-FPM
+   - Uses Alpine Linux for minimal footprint
+
+3. **PHP-FPM Service** (`php-fpm/`):
+   - Runs PHP 8.4 with FPM (FastCGI Process Manager)
+   - Optimized for production Laravel applications
+   - Includes all necessary PHP extensions
+
+### Installation Process
+
+1. **Environment Setup**: The installer removes any existing app and creates a completely fresh Laravel installation
+2. **Fresh Install**: Uses `laravel new` with React scaffolding, PHPUnit testing, and npm package management
+3. **Output**: Places the complete Laravel application in your local `./out/{APP_NAME}` directory
+
+## Configuration
+
+### Environment Variables
+
+Configure your installation by editing `laravel/.env`:
+
+```bash
+# Required: Your application name
+APP_NAME=my-awesome-laravel-app
+
+# Optional: Add other configuration as needed
+```
+
+### Customizing Services
+
+Each service can be customized by modifying its respective Dockerfile and configuration files:
+
+- **Laravel Installer**: Modify `laravel/install.sh` to add additional packages or configuration
+- **Nginx**: Update `nginx/nginx.conf.template` for custom server configuration  
+- **PHP-FPM**: Edit `php-fpm/www.conf` for FPM pool settings
 
 ## Future Plans
 
 The next version will include:
-- 🔧 Configurable package selection
-- 🎨 Multiple frontend framework options (Vue, Alpine, etc.)
-- 🗄️ Database selection and setup automation
-- 📦 Custom package preset definitions
-- 🚀 One-command deployment options
-- 🔒 Security hardening options
+- 🔧 **Configurable package selection** (Telescope, Debugbar, Blueprint, etc.)
+- 🎨 **Multiple frontend framework options** (Vue, Alpine, Livewire)
+- 🗄️ **Database service integration** (PostgreSQL, MySQL, Redis)
+- 📦 **Custom package preset definitions**
+- 🚀 **Complete development environment** with hot reloading
+- 🔒 **Security hardening options**
+- 🐋 **Production-ready container orchestration**
+- ⚙️ **One-command setup for existing Laravel projects**
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Missing Dockerfile at root**: The current docker-compose.yml expects a Dockerfile at the project root. If you encounter build errors, ensure you're using the correct service configuration.
+
+2. **Permission Issues**: On Windows with WSL2, ensure Docker has proper permissions to mount volumes.
+
+3. **App Name Not Set**: Make sure to configure `APP_NAME` in `laravel/.env` before running the installer.
+
+### Getting Help
+
+- **Issues**: Report bugs on [GitHub Issues](https://github.com/arubenruben/Laravel-Dockerized-Installer/issues)
+- **Discussions**: Join conversations in [GitHub Discussions](https://github.com/arubenruben/Laravel-Dockerized-Installer/discussions)
 
 ## Contributing
 
