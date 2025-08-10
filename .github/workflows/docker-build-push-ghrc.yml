@@ -30,3 +30,7 @@ jobs:
         run: |
           docker build -t ghcr.io/${{ github.repository_owner }}/nginx-laravel-proxy:${{ inputs.image_tag }} ./nginx
           docker push ghcr.io/${{ github.repository_owner }}/nginx-laravel-proxy:${{ inputs.image_tag }}
+      - name: Build and Push php-fpm Docker Image
+        run: |
+          docker build -t ghcr.io/${{ github.repository_owner }}/laravel-php-fpm:${{ inputs.image_tag }} ./php-fpm
+          docker push ghcr.io/${{ github.repository_owner }}/laravel-php-fpm:${{ inputs.image_tag }}

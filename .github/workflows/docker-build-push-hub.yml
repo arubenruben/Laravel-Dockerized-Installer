@@ -32,3 +32,8 @@ jobs:
         run: |
           docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/nginx-laravel-proxy:${{ inputs.image_tag }} ./nginx
           docker push ${{ secrets.DOCKER_HUB_USERNAME }}/nginx-laravel-proxy:${{ inputs.image_tag }}
+      
+      - name: Build and Push php-fpm Docker Image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/laravel-php-fpm:${{ inputs.image_tag }} ./php-fpm
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/laravel-php-fpm:${{ inputs.image_tag }}
