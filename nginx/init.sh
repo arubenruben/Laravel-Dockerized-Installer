@@ -7,7 +7,3 @@ envsubst < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
 # Run this script since it is mentioned as entrypoint for nginx base image
 exec /docker-entrypoint.sh
-
-# Run the default command that derives from the CMD instruction in the Dockerfile
-#exec "$@"
-exec nginx -g "daemon off;"
