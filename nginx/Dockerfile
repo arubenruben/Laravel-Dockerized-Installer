@@ -1,16 +1,14 @@
 FROM nginx:alpine
 
-WORKDIR /etc/nginx/
+COPY nginx.conf.template /etc/nginx/nginx.conf.template
 
-COPY nginx.conf.template .
+COPY ./init.sh /etc/nginx/init.sh
 
-COPY ./init.sh .
+RUN chmod +x /etc/nginx/init.sh
 
-RUN chmod +x init.sh
+ENTRYPOINT ["/bin/sh", "-c", "/etc/nginx/init.sh"]
 
-ENTRYPOINT ["/bin/sh", "-c", "./init.sh"]
+WORKDIR /var/www/public
 
-# Expose port 80 and start Nginx
 EXPOSE 80
-
 CMD ["nginx", "-g", "daemon off;"]
