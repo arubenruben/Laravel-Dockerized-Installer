@@ -28,3 +28,7 @@ jobs:
         run: |
           docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/laravel-installer:${{ inputs.image_tag }} .
           docker push ${{ secrets.DOCKER_HUB_USERNAME }}/laravel-installer:${{ inputs.image_tag }}
+      - name: Build and Push Nginx Docker Image
+        run: |
+          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/nginx-laravel-proxy:${{ inputs.image_tag }} -f nginx/Dockerfile .
+          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/nginx-laravel-proxy:${{ inputs.image_tag }}

@@ -1,0 +1,44 @@
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    keepalive_timeout  65;
+
+    server {
+        listen ${NGINX_LISTEN_PORT};
+        server_name ${NGINX_SERVER_NAME};
+
+        root ${NGINX_DOCUMENT_ROOT};
+        index index.php index.html;
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+            add_header 'Access-Control-Expose-Headers' 'X-Inertia';
+        }
+
+        location ~ \.php$ {
+            fastcgi_pass ${PHP_FPM_HOST}:${PHP_FPM_PORT};
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+        }
+
+        # PHP-FPM status page
+        location ~ ^/(status|ping)$ {
+            access_log off;
+            fastcgi_pass ${PHP_FPM_HOST}:${PHP_FPM_PORT};
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+            allow 127.0.0.1;
+            allow 10.0.0.0/8;
+            allow 172.16.0.0/12;
+            allow 192.168.0.0/16;
+            deny all;
+        }
+    }
+}
