@@ -10,10 +10,10 @@ http {
     keepalive_timeout  65;
 
     server {
-        listen ${NGINX_LISTEN_PORT};
-        server_name ${NGINX_SERVER_NAME};
+        listen 80;
+        server_name localhost;
 
-        root ${NGINX_DOCUMENT_ROOT};
+        root /var/www/public;
         index index.php index.html;
 
         location / {
