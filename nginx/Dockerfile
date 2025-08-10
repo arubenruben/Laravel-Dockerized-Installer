@@ -1,9 +1,16 @@
 FROM nginx:alpine
 
-COPY nginx.conf.template /etc/nginx/nginx.conf.template
+WORKDIR /etc/nginx
+
+COPY nginx.conf.template .
+
+COPY init.sh .
+
+RUN chmod +x init.sh
+
+ENTRYPOINT ["/bin/sh", "-c", "./init.sh"]
 
 # Expose port 80 and start Nginx
 EXPOSE 80
 
-# Use envsubst to substitute environment variables and start nginx
-ENTRYPOINT ["/bin/sh", "-c", "envsubst < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"]
+CMD ["nginx", "-g", "daemon off;"]
