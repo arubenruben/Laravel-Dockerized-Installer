@@ -1,6 +1,6 @@
 FROM nginx:alpine
 
-COPY ./nginx/nginx.conf.template /etc/nginx/nginx.conf.template
+COPY nginx.conf.template /etc/nginx/nginx.conf.template
 
 # Expose port 80 and start Nginx
 EXPOSE 80
