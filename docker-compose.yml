@@ -8,4 +8,4 @@ services:
     env_file:
       - ./laravel/.env
     volumes:
-      - ./out:/app/out
+      - ./laravel/out:/app/out
