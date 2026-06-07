@@ -1,3 +1,6 @@
+import json
+import logging
+import os
 from enum import Enum
 from typing import List, Optional
 
@@ -9,7 +12,11 @@ GITHUB_HEADERS = {
     "X-GitHub-Api-Version": "2022-11-28",
 }
 
+_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".laravel_versions_cache.json")
+
 _version_enum: Optional[type] = None
+
+logger = logging.getLogger(__name__)
 
 
 async def initialize_versions() -> None:
@@ -17,6 +24,28 @@ async def initialize_versions() -> None:
     global _version_enum
     versions = await _fetch_laravel_versions()
     _version_enum = _build_version_enum(versions)
+
+
+def _read_cache() -> Optional[List[str]]:
+    """Return cached versions from disk, or None if unavailable."""
+    try:
+        with open(_CACHE_FILE, "r") as f:
+            data = json.load(f)
+        logger.info("Loaded Laravel versions from local cache (%s).", _CACHE_FILE)
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _write_cache(versions: List[str]) -> None:
+    """Persist versions to disk to avoid redundant GitHub API calls."""
+    try:
+        os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
+        with open(_CACHE_FILE, "w") as f:
+            json.dump(versions, f)
+        logger.info("Saved Laravel versions to local cache (%s).", _CACHE_FILE)
+    except OSError as exc:
+        logger.warning("Could not write version cache: %s", exc)
 
 
 def get_version_enum() -> Optional[type]:
@@ -40,6 +69,10 @@ async def download_release_zip(version: str) -> bytes:
 
 
 async def _fetch_laravel_versions() -> List[str]:
+    cached = _read_cache()
+    if cached is not None:
+        return cached
+
     async with httpx.AsyncClient(timeout=15.0) as client:
         versions: List[str] = []
         page = 1
@@ -57,7 +90,9 @@ async def _fetch_laravel_versions() -> List[str]:
             if len(data) < 100:
                 break
             page += 1
-        return versions
+
+    _write_cache(versions)
+    return versions
 
 
 def _build_version_enum(versions: List[str]) -> type:
