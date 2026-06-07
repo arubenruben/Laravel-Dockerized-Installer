@@ -4,11 +4,15 @@ on:
   push:
     branches:
       - main
+      - master
+      - develop
     tags:
       - "v*.*.*"
   pull_request:
     branches:
       - main
+      - master
+      - develop
 
 env:
   REGISTRY: ghcr.io
@@ -43,12 +47,16 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
+            # latest → develop branch only
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/develop' }}
+            # stable → main / master branch and version tags
+            type=raw,value=stable,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') }}
+            # semver tags (v1.2.3 → 1.2.3, 1.2, 1)
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            # short SHA for traceability on every pushed commit
             type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v6

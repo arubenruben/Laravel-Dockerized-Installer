@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import RedirectResponse
 
 from dto.responses.health_response import HealthResponse
 from dto.router.v1 import router as v1_router
@@ -36,6 +37,11 @@ app.include_router(v1_router)
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health", tags=["utility"], response_model=HealthResponse)
