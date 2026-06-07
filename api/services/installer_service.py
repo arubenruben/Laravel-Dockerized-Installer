@@ -1,4 +1,12 @@
+import asyncio
+import base64
 import io
+import json
+import os
+import secrets
+import shutil
+import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -12,7 +20,33 @@ TEMPLATES: list[tuple[str, str]] = [
     ("Dockerfile.j2", "Dockerfile"),
     ("docker-compose.yml.j2", "docker-compose.yml"),
     (".env.docker.j2", ".env.docker"),
+    ("README.docker.md.j2", "README.md"),
 ]
+
+# Templates injected into the server-generated Inertia project.
+INERTIA_SERVER_TEMPLATES: list[tuple[str, str]] = [
+    ("Dockerfile-inertia.j2", "Dockerfile"),
+    ("docker-compose-inertia.yml.j2", "docker-compose.yml"),
+    ("entrypoint.sh.j2", "entrypoint.sh"),
+    ("README.inertia.md.j2", "README.md"),
+]
+
+# Composer package for each Inertia starter kit.
+_STARTER_KIT_PACKAGES: dict[str, str] = {
+    "react": "laravel/react-starter-kit",
+    "vue": "laravel/vue-starter-kit",
+    "livewire": "laravel/livewire-starter-kit",
+    "livewire-class-components": "laravel/livewire-starter-kit",
+}
+
+# Valid auth feature keys accepted by `php artisan install:features --answers`
+AUTH_FEATURE_KEYS: set[str] = {
+    "email-verification",
+    "registration",
+    "2fa",
+    "passkeys",
+    "password-confirmation",
+}
 
 _jinja_env = Environment(
     loader=FileSystemLoader(str(SCAFFOLD_DIR)),
@@ -21,17 +55,82 @@ _jinja_env = Environment(
 )
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def generate_app_key() -> str:
+    """Generate a Laravel-compatible APP_KEY (base64:… of 32 random bytes)."""
+    return "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
+
+
+def _starter_kit_ref(starter_kit: str, auth_provider: str, teams: bool) -> str:
+    """
+    Return the ``composer create-project`` package reference (name[:branch])
+    for the requested starter kit, taking workos / teams variants into account.
+    """
+    package = _STARTER_KIT_PACKAGES[starter_kit]
+    if starter_kit == "livewire-class-components":
+        return f"{package}:dev-components"
+    branch: str | None = {
+        ("workos", True): "dev-workos-teams",
+        ("workos", False): "dev-workos",
+        ("laravel", True): "dev-teams",
+    }.get((auth_provider, teams))
+    return f"{package}:{branch}" if branch else package
+
+
+def _build_env() -> dict[str, str]:
+    """Return an os.environ copy augmented with the Composer global bin dir."""
+    env = os.environ.copy()
+    env.update({"TERM": "dumb", "NO_COLOR": "1"})
+    try:
+        result = subprocess.run(
+            ["composer", "global", "config", "bin-dir", "--absolute"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.stdout.strip():
+            env["PATH"] = f"{result.stdout.strip()}:{env.get('PATH', '')}"
+    except Exception:
+        pass
+    return env
+
+
+def _run(cmd: list[str], *, cwd: Path | str, env: dict, timeout: int, check: bool = True) -> None:
+    subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        check=check,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        timeout=timeout,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
 def build_docker_zip(upstream_zip_bytes: bytes, context: dict) -> io.BytesIO:
     """
-    Re-packages the upstream Laravel source zip, rendering and injecting
-    Jinja2 scaffold templates from api/scaffold/:
-      - Dockerfile.j2          → Dockerfile
-      - docker-compose.yml.j2  → docker-compose.yml
-      - .env.docker.j2         → .env.docker
+    Re-packages the upstream Laravel source zip, generating an APP_KEY server-side
+    and rendering/injecting Docker scaffold files so the archive is ready to run with
+    ``docker compose up --build`` — no manual steps required.
 
-    ``context`` is passed to every template (e.g. php_version, laravel_version,
-    app_port).
+    Injected files:
+      - Dockerfile
+      - docker-compose.yml
+      - .env         ← pre-filled, includes a generated APP_KEY
+      - .env.docker  ← backup copy
+      - README.md
     """
+    app_key = generate_app_key()
+    ctx = {**context, "app_key": app_key}
+
     output_buffer = io.BytesIO()
 
     with zipfile.ZipFile(io.BytesIO(upstream_zip_bytes), "r") as upstream_zip:
@@ -42,9 +141,151 @@ def build_docker_zip(upstream_zip_bytes: bytes, context: dict) -> io.BytesIO:
             root = upstream_zip.namelist()[0].split("/")[0] + "/"
 
             for template_path, dest_path in TEMPLATES:
-                rendered = _jinja_env.get_template(template_path).render(context)
+                rendered = _jinja_env.get_template(template_path).render(ctx)
                 out_zip.writestr(root + dest_path, rendered)
+
+            # Inject .env (ready to use — no cp step needed) alongside .env.docker
+            env_content = _jinja_env.get_template(".env.docker.j2").render(ctx)
+            out_zip.writestr(root + ".env", env_content)
 
     output_buffer.seek(0)
     return output_buffer
+
+
+async def build_inertia_project_zip(context: dict) -> io.BytesIO:
+    """
+    Scaffolds a complete Laravel + Inertia.js project on the server and returns
+    a Docker-ready zip. See ``_build_inertia_project_zip_sync`` for the full flow.
+    """
+    return await asyncio.to_thread(_build_inertia_project_zip_sync, context)
+
+
+# ---------------------------------------------------------------------------
+# Private — synchronous implementation
+# ---------------------------------------------------------------------------
+
+
+def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
+    """
+    Server-side project generation flow:
+
+    1. ``composer create-project <kit> <name> --no-scripts`` — installs PHP
+       deps without running any post-install artisan commands or migrations.
+    2. Copy ``.env.example`` → ``.env``, run ``package:discover``,
+       ``key:generate``.
+    3. ``npm install`` — required before ``install:features`` because chisel's
+       ``apply`` callback runs ``npm run lint`` / ``npm run format``.
+    4. ``php artisan install:features --no-interaction --answers=<json>`` —
+       sculpts the project according to the requested auth features (default: none).
+    5. Read the generated APP_KEY; render and write Docker scaffold files.
+    6. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
+       hostnames, Redis, etc.).
+    7. Zip everything except ``vendor/``, ``node_modules/``, ``.git/``,
+       and ``public/build/`` (Vite handles assets at runtime).
+    """
+    app_name = context["app_name"].lower().replace(" ", "-")
+    env = _build_env()
+
+    # Optional: install laravel/boost globally
+    if context.get("install_boost"):
+        _run(
+            ["composer", "global", "require", "laravel/boost", "--dev", "--no-interaction", "-q"],
+            cwd="/tmp",
+            env=env,
+            timeout=180,
+        )
+
+    package_ref = _starter_kit_ref(
+        context["starter_kit"], context["auth_provider"], context["teams"]
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        project_dir = Path(tmp_dir) / app_name
+
+        # ── 1. Create project (skip scripts so we control the full flow) ─────
+        _run(
+            [
+                "composer", "create-project", package_ref, app_name,
+                "--stability=dev", "--no-interaction", "--no-scripts",
+            ],
+            cwd=tmp_dir,
+            env=env,
+            timeout=600,
+        )
+
+        # ── 2. Bootstrap Laravel ─────────────────────────────────────────────
+        if not (project_dir / ".env").exists():
+            shutil.copy(project_dir / ".env.example", project_dir / ".env")
+
+        # Discover packages (replaces post-autoload-dump hook we skipped)
+        _run(
+            ["php", "artisan", "package:discover", "--ansi"],
+            cwd=project_dir,
+            env=env,
+            timeout=60,
+            check=False,
+        )
+        _run(
+            ["php", "artisan", "key:generate", "--ansi"],
+            cwd=project_dir,
+            env=env,
+            timeout=60,
+        )
+
+        # ── 3. npm install (chisel apply callback needs node_modules) ─────────
+        _run(["npm", "install"], cwd=project_dir, env=env, timeout=300)
+
+        # ── 4. Sculpt auth features via chisel ───────────────────────────────
+        # Default: no features. Pass explicit list to select specific ones.
+        auth_features: list[str] = [
+            f for f in context.get("auth_features", []) if f in AUTH_FEATURE_KEYS
+        ]
+        answers_json = json.dumps({"auth_features": auth_features})
+        _run(
+            ["php", "artisan", "install:features", "--no-interaction", f"--answers={answers_json}"],
+            cwd=project_dir,
+            env=env,
+            timeout=300,
+        )
+
+        # ── 5. Read APP_KEY ───────────────────────────────────────────────────
+        app_key = ""
+        env_file = project_dir / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                if line.startswith("APP_KEY="):
+                    app_key = line.split("=", 1)[1].strip()
+                    break
+
+        # ── 6. Write Docker scaffold files ────────────────────────────────────
+        ctx = {**context, "app_key": app_key}
+        for template_path, dest_path in INERTIA_SERVER_TEMPLATES:
+            rendered = _jinja_env.get_template(template_path).render(ctx)
+            dest = project_dir / dest_path
+            dest.write_text(rendered)
+            if dest_path.endswith(".sh"):
+                dest.chmod(0o755)
+
+        env_docker = _jinja_env.get_template(".env.docker.j2").render(ctx)
+        (project_dir / ".env.docker").write_text(env_docker)
+        (project_dir / ".env").write_text(env_docker)  # ready for docker compose
+
+        # ── 7. Zip the project ────────────────────────────────────────────────
+        _EXCLUDE_TOPS = {"vendor", "node_modules", ".git"}
+
+        output_buffer = io.BytesIO()
+        with zipfile.ZipFile(output_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for file_path in sorted(project_dir.rglob("*")):
+                if not file_path.is_file():
+                    continue
+                rel = file_path.relative_to(project_dir)
+                if rel.parts[0] in _EXCLUDE_TOPS:
+                    continue
+                # Skip Vite build artifacts — the dev container handles assets
+                if len(rel.parts) >= 2 and rel.parts[:2] == ("public", "build"):
+                    continue
+                zf.write(file_path, f"{app_name}/{rel}")
+
+        output_buffer.seek(0)
+        return output_buffer
 
