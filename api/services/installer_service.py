@@ -11,7 +11,6 @@ SCAFFOLD_DIR = Path(__file__).parent.parent / "scaffold"
 TEMPLATES: list[tuple[str, str]] = [
     ("Dockerfile.j2", "Dockerfile"),
     ("docker-compose.yml.j2", "docker-compose.yml"),
-    ("docker/nginx/default.conf.j2", "docker/nginx/default.conf"),
     (".env.docker.j2", ".env.docker"),
 ]
 
@@ -28,7 +27,6 @@ def build_docker_zip(upstream_zip_bytes: bytes, context: dict) -> io.BytesIO:
     Jinja2 scaffold templates from api/scaffold/:
       - Dockerfile.j2          → Dockerfile
       - docker-compose.yml.j2  → docker-compose.yml
-      - docker/nginx/default.conf.j2 → docker/nginx/default.conf
       - .env.docker.j2         → .env.docker
 
     ``context`` is passed to every template (e.g. php_version, laravel_version,

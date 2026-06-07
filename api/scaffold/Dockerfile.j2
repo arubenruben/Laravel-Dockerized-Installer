@@ -1,4 +1,4 @@
-FROM php:{{ php_version }}-fpm-alpine
+FROM php:{{ php_version }}-cli-alpine
 
 RUN apk add --no-cache \
     bash curl zip unzip git libpng-dev libjpeg-turbo-dev freetype-dev \
@@ -19,8 +19,8 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /var/www/html
 COPY . .
 
-RUN composer install --no-dev --optimize-autoloader --no-interaction && \
+RUN composer install --optimize-autoloader --no-interaction && \
     chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
 
-EXPOSE 9000
-CMD ["php-fpm"]
+EXPOSE 8000
+CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
