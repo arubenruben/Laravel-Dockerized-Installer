@@ -4,7 +4,15 @@ RUN apk add --no-cache \
     bash curl zip unzip git libpng-dev libjpeg-turbo-dev freetype-dev \
     oniguruma-dev libxml2-dev && \
     docker-php-ext-configure gd --with-freetype --with-jpeg && \
+{% if db == 'mysql' %}
     docker-php-ext-install pdo pdo_mysql mbstring gd xml bcmath opcache
+{% elif db == 'postgres' %}
+    apk add --no-cache postgresql-dev && \
+    docker-php-ext-install pdo pdo_pgsql mbstring gd xml bcmath opcache
+{% else %}
+    apk add --no-cache sqlite-dev && \
+    docker-php-ext-install pdo pdo_sqlite mbstring gd xml bcmath opcache
+{% endif %}
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 

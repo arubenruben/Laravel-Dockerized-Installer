@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
@@ -35,6 +37,14 @@ async def download(
         ge=1024,
         le=65535,
         description="Host port mapped to Nginx port 80 in docker-compose.yml",
+    ),
+    db: Literal["mysql", "postgres", "sqlite"] = Query(
+        ...,
+        description="Database engine to use",
+    ),
+    app_name: str = Query(
+        default="Laravel",
+        description="Application name (APP_NAME in .env)",
     ),
 ):
     """
@@ -75,6 +85,8 @@ async def download(
         "laravel_version": version,
         "php_version": php_version,
         "app_port": str(app_port),
+        "db": db,
+        "app_name": app_name,
     }
     output_buffer = build_docker_zip(upstream_zip_bytes, template_context)
 
