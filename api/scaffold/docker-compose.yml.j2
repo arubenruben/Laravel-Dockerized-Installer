@@ -13,7 +13,6 @@ services:
 {% if db != 'sqlite' %}
       - db
 {% endif %}
-      - redis
     environment:
       APP_ENV: local
 {% if db == 'mysql' %}
@@ -34,10 +33,12 @@ services:
       DB_CONNECTION: sqlite
       DB_DATABASE: /var/www/html/database/database.sqlite
 {% endif %}
-      REDIS_HOST: redis
-      CACHE_DRIVER: redis
-      SESSION_DRIVER: redis
-      QUEUE_CONNECTION: redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/up"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 
 {% if db == 'mysql' %}
@@ -54,6 +55,12 @@ services:
       - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "laravel", "-psecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 {% elif db == 'postgres' %}
   db:
     image: postgres:16-alpine
@@ -67,14 +74,13 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "laravel", "-d", "laravel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 {% endif %}
-
-  redis:
-    image: redis:7-alpine
-    container_name: laravel_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
 
 {% if db != 'sqlite' %}
 volumes:
