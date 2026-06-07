@@ -26,16 +26,27 @@ async def download(
         ...,
         description="Laravel release version to download",
     ),
+    php_version: str = Query(
+        default="8.3",
+        description="PHP version used in the Dockerfile (e.g. 8.3, 8.2)",
+    ),
+    app_port: int = Query(
+        default=8080,
+        ge=1024,
+        le=65535,
+        description="Host port mapped to Nginx port 80 in docker-compose.yml",
+    ),
 ):
     """
     Downloads the official Laravel source zip for the requested **version**,
-    then injects Docker scaffold files:
+    then renders and injects Docker scaffold files:
 
-    - `Dockerfile` – PHP 8.3-fpm image
-    - `docker-compose.yml` – app + nginx + MySQL 8 + Redis 7
+    - `Dockerfile` – PHP `php_version`-fpm image (default: 8.3)
+    - `docker-compose.yml` – app + nginx + MySQL 8 + Redis 7, exposed on `app_port` (default: 8080)
     - `docker/nginx/default.conf` – Nginx virtual host
     - `.env.docker` – pre-filled environment variables for Docker
 
+    All parameters have defaults — just pick a `version` for a quick start.  
     Run `cp .env.docker .env && docker compose up --build` to get started.
     """
     version_enum = github_service.get_version_enum()
@@ -60,7 +71,12 @@ async def download(
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    output_buffer = build_docker_zip(upstream_zip_bytes)
+    template_context = {
+        "laravel_version": version,
+        "php_version": php_version,
+        "app_port": str(app_port),
+    }
+    output_buffer = build_docker_zip(upstream_zip_bytes, template_context)
 
     filename = f"laravel-{version}-docker.zip"
     return StreamingResponse(

@@ -3,3 +3,4 @@ pydantic
 pydantic-settings
 environs
 httpx
+jinja2
