@@ -29,8 +29,8 @@ async def download(
         description="Laravel release version to download",
     ),
     php_version: str = Query(
-        default="8.3",
-        description="PHP version used in the Dockerfile (e.g. 8.3, 8.2)",
+        default="8.4",
+        description="PHP version used in the Dockerfile (e.g. 8.4, 8.4)",
     ),
     app_port: int = Query(
         default=8080,
@@ -51,7 +51,7 @@ async def download(
     Downloads the official Laravel source zip for the requested **version**,
     then renders and injects Docker scaffold files:
 
-    - `Dockerfile` – PHP `php_version`-fpm image (default: 8.3)
+    - `Dockerfile` – PHP `php_version`-fpm image (default: 8.4)
     - `docker-compose.yml` – app + nginx + MySQL 8 + Redis 7, exposed on `app_port` (default: 8080)
     - `docker/nginx/default.conf` – Nginx virtual host
     - `.env.docker` – pre-filled environment variables for Docker
@@ -166,8 +166,8 @@ async def new_inertia(
     ),
     # ── Shared Docker parameters ─────────────────────────────────────────────
     php_version: str = Query(
-        default="8.3",
-        description="PHP version used in the generated Dockerfile (e.g. 8.3, 8.2).",
+        default="8.4",
+        description="PHP version used in the generated Dockerfile (e.g. 8.4, 8.2).",
     ),
     app_port: int = Query(
         default=8080,

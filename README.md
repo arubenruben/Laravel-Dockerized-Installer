@@ -34,7 +34,7 @@ Downloads an official Laravel release from GitHub and injects Docker scaffold fi
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `version` | `string` | ✅ | — | Laravel release tag (e.g. `v11.0.0`) |
-| `php_version` | `string` | | `8.3` | PHP version in the Dockerfile |
+| `php_version` | `string` | | `8.4` | PHP version in the Dockerfile |
 | `app_port` | `integer` | | `8080` | Host port mapped to the app container |
 | `db` | `mysql` \| `postgres` \| `sqlite` | ✅ | — | Database engine |
 | `app_name` | `string` | | `Laravel` | `APP_NAME` value in `.env` |
@@ -78,7 +78,7 @@ Runs `laravel new` **on the API server** with the requested options and returns 
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `php_version` | `string` | `8.3` | PHP version in the Dockerfile |
+| `php_version` | `string` | `8.4` | PHP version in the Dockerfile |
 | `app_port` | `integer` | `8080` | Host port mapped to the Laravel app container |
 | `db` | `mysql` \| `postgres` \| `sqlite` | `mysql` | Database engine |
 | `app_name` | `string` | `my-app` | Application name and project directory |
