@@ -2,7 +2,9 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -11,6 +13,8 @@ import zipfile
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+logger = logging.getLogger(__name__)
 
 SCAFFOLD_DIR = Path(__file__).parent.parent / "scaffold"
 
@@ -65,6 +69,15 @@ def generate_app_key() -> str:
     return "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
 
 
+def slugify_app_name(app_name: str) -> str:
+    """
+    Turn a user-supplied app name into a safe slug usable as a single
+    filesystem path component (no ``..``, ``/``, or other separators).
+    """
+    slug = re.sub(r"[^a-z0-9-]+", "-", app_name.lower()).strip("-")
+    return slug or "app"
+
+
 def _starter_kit_ref(starter_kit: str, auth_provider: str, teams: bool) -> str:
     """
     Return the ``composer create-project`` package reference (name[:branch])
@@ -94,8 +107,8 @@ def _build_env() -> dict[str, str]:
         )
         if result.stdout.strip():
             env["PATH"] = f"{result.stdout.strip()}:{env.get('PATH', '')}"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Could not determine Composer global bin-dir: %s", exc)
     return env
 
 
@@ -173,17 +186,20 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
        deps without running any post-install artisan commands or migrations.
     2. Copy ``.env.example`` → ``.env``, run ``package:discover``,
        ``key:generate``.
-    3. ``npm install`` — required before ``install:features`` because chisel's
+    3. If ``testing_framework == "pest"``, swap PHPUnit for Pest
+       (``composer remove phpunit/phpunit``, ``composer require pestphp/pest``,
+       ``php artisan pest:install``).
+    4. ``npm install`` — required before ``install:features`` because chisel's
        ``apply`` callback runs ``npm run lint`` / ``npm run format``.
-    4. ``php artisan install:features --no-interaction --answers=<json>`` —
+    5. ``php artisan install:features --no-interaction --answers=<json>`` —
        sculpts the project according to the requested auth features (default: none).
-    5. Read the generated APP_KEY; render and write Docker scaffold files.
-    6. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
+    6. Read the generated APP_KEY; render and write Docker scaffold files.
+    7. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
        hostnames, Redis, etc.).
-    7. Zip everything except ``vendor/``, ``node_modules/``, ``.git/``,
+    8. Zip everything except ``vendor/``, ``node_modules/``, ``.git/``,
        and ``public/build/`` (Vite handles assets at runtime).
     """
-    app_name = context["app_name"].lower().replace(" ", "-")
+    app_name = slugify_app_name(context["app_name"])
     env = _build_env()
 
     # Optional: install laravel/boost globally
@@ -232,10 +248,32 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
             timeout=60,
         )
 
-        # ── 3. npm install (chisel apply callback needs node_modules) ─────────
+        # ── 3. Swap the test runner to Pest, if requested ─────────────────────
+        if context.get("testing_framework") == "pest":
+            _run(
+                ["composer", "remove", "phpunit/phpunit", "--dev", "--no-interaction"],
+                cwd=project_dir,
+                env=env,
+                timeout=120,
+                check=False,
+            )
+            _run(
+                ["composer", "require", "pestphp/pest", "--dev", "--no-interaction", "-W"],
+                cwd=project_dir,
+                env=env,
+                timeout=180,
+            )
+            _run(
+                ["php", "artisan", "pest:install", "--no-interaction"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+
+        # ── 4. npm install (chisel apply callback needs node_modules) ─────────
         _run(["npm", "install"], cwd=project_dir, env=env, timeout=300)
 
-        # ── 4. Sculpt auth features via chisel ───────────────────────────────
+        # ── 5. Sculpt auth features via chisel ───────────────────────────────
         # Default: no features. Pass explicit list to select specific ones.
         auth_features: list[str] = [
             f for f in context.get("auth_features", []) if f in AUTH_FEATURE_KEYS
@@ -248,7 +286,7 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
             timeout=300,
         )
 
-        # ── 5. Read APP_KEY ───────────────────────────────────────────────────
+        # ── 6. Read APP_KEY ───────────────────────────────────────────────────
         app_key = ""
         env_file = project_dir / ".env"
         if env_file.exists():
@@ -257,7 +295,7 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
                     app_key = line.split("=", 1)[1].strip()
                     break
 
-        # ── 6. Write Docker scaffold files ────────────────────────────────────
+        # ── 7. Write Docker scaffold files ────────────────────────────────────
         ctx = {**context, "app_key": app_key}
         for template_path, dest_path in INERTIA_SERVER_TEMPLATES:
             rendered = _jinja_env.get_template(template_path).render(ctx)
@@ -270,7 +308,7 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
         (project_dir / ".env.docker").write_text(env_docker)
         (project_dir / ".env").write_text(env_docker)  # ready for docker compose
 
-        # ── 7. Zip the project ────────────────────────────────────────────────
+        # ── 8. Zip the project ────────────────────────────────────────────────
         _EXCLUDE_TOPS = {"vendor", "node_modules", ".git"}
 
         output_buffer = io.BytesIO()

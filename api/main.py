@@ -67,7 +67,7 @@ def custom_openapi():
     if version_enum is not None:
         versions_list = [e.value for e in version_enum]  # type: ignore[attr-defined]
         try:
-            param = schema["paths"]["/v1/download"]["get"]["parameters"][0]
+            param = schema["paths"]["/v1/release"]["get"]["parameters"][0]
             param["schema"]["enum"] = versions_list
             param["schema"]["example"] = versions_list[0] if versions_list else None
         except (KeyError, IndexError):
