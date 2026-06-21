@@ -60,7 +60,7 @@ services:
       # Windows/macOS can return EPERM on files under a large bind-mounted tree).
       - vite_node_modules:/var/www/html/node_modules
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:5173 || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5173/@vite/client || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
