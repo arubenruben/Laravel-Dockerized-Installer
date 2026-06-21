@@ -53,12 +53,7 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - .:/var/www/html
-      # node_modules lives in its own volume instead of the bind mount so npm
-      # writes to the container's native filesystem. Bind-mounting node_modules
-      # directly is unreliable across hosts (Docker Desktop's virtualized FS on
-      # Windows/macOS can return EPERM on files under a large bind-mounted tree).
-      - vite_node_modules:/var/www/html/node_modules
+      - .:/var/www/html      
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5173/@vite/client || exit 1"]
       interval: 30s
