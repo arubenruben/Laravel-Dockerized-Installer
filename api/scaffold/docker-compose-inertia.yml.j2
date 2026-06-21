@@ -10,8 +10,11 @@ services:
     volumes:
       - .:/var/www/html
     depends_on:
+      vite:
+        condition: service_healthy
 {% if db != 'sqlite' %}
-      - db
+      db:
+        condition: service_started
 {% endif %}
     environment:
       APP_ENV: local
@@ -60,9 +63,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    depends_on:
-      app:
-        condition: service_healthy
 
 {% if db == 'mysql' %}
   db:
