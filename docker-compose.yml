@@ -4,6 +4,6 @@ services:
     container_name: ${CONTAINER_NAME:-laravel_installer_api}
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${HOST_PORT:-8000}:8000"
     environment:
       PYTHONUNBUFFERED: "1"
