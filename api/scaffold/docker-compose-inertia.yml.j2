@@ -10,11 +10,8 @@ services:
     volumes:
       - .:/var/www/html
     depends_on:
-      vite:
-        condition: service_healthy
 {% if db != 'sqlite' %}
-      db:
-        condition: service_started
+      - db
 {% endif %}
     environment:
       APP_ENV: local
@@ -51,6 +48,8 @@ services:
     working_dir: /var/www/html
     command: >
       sh -c "apk add --no-cache nodejs npm &&
+             echo 'Waiting for composer dependencies...' &&
+             until [ -f vendor/autoload.php ]; do sleep 2; done &&
              npm install &&
              npm run dev -- --host"
     ports:

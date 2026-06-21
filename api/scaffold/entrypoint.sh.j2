@@ -32,5 +32,18 @@ until php artisan migrate --force --no-interaction; do
 done
 
 {% endif %}
+# ── 4. Wait for the Vite dev server to come up ───────────────────────────────
+echo "==> Waiting for the Vite dev server..."
+MAX_RETRIES=60
+ATTEMPT=0
+until [ -f public/hot ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    if [ "$ATTEMPT" -ge "$MAX_RETRIES" ]; then
+        echo "WARNING: Vite dev server not ready after ${MAX_RETRIES} attempts. Starting anyway."
+        break
+    fi
+    sleep 2
+done
+
 echo "==> Starting Laravel development server..."
 exec php artisan serve --host=0.0.0.0 --port=8000
