@@ -122,6 +122,45 @@ def _strip_remote_font_imports(project_dir: Path) -> None:
             css_file.write_text(stripped)
 
 
+_VITE_DEFINE_CONFIG_RE = re.compile(r"defineConfig\(\{")
+
+_VITE_DEV_SERVER_CONFIG = """server: {
+        host: '0.0.0.0',
+        hmr: {
+            host: 'localhost',
+        },
+    },
+"""
+
+
+def _configure_vite_dev_server(project_dir: Path) -> None:
+    """
+    Add an explicit ``server`` block to the generated ``vite.config.ts``.
+
+    The dev container runs ``vite --host``, which binds to all interfaces
+    (``::``) inside the container. Without an explicit ``server.hmr.host``,
+    laravel-vite-plugin falls back to that raw bind address when writing
+    ``public/hot``, producing an URL like ``http://[::]:5173`` that's
+    unreachable from the host browser. Laravel then can't detect the dev
+    server and falls back to the (nonexistent) production manifest,
+    raising ``ViteManifestNotFoundException``. Pinning ``host: '0.0.0.0'``
+    and ``hmr.host: 'localhost'`` keeps the container listening everywhere
+    while reporting the host-reachable address (via the ``5173:5173`` port
+    mapping) for assets/HMR.
+    """
+    vite_config = project_dir / "vite.config.ts"
+    if not vite_config.is_file():
+        return
+    original = vite_config.read_text()
+    if re.search(r"\bserver\s*:", original):
+        return
+    patched, count = _VITE_DEFINE_CONFIG_RE.subn(
+        "defineConfig({\n    " + _VITE_DEV_SERVER_CONFIG, original, count=1
+    )
+    if count:
+        vite_config.write_text(patched)
+
+
 def _build_env() -> dict[str, str]:
     """Return an os.environ copy augmented with the Composer global bin dir."""
     env = os.environ.copy()
@@ -303,6 +342,7 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
         # self-hosts these by fetching them at build time, and this server
         # has no network route to those font CDNs (see _strip_remote_font_imports).
         _strip_remote_font_imports(project_dir)
+        _configure_vite_dev_server(project_dir)
         _run(["npm", "install"], cwd=project_dir, env=env, timeout=300)
 
         # ── 5. Sculpt auth features via chisel ───────────────────────────────
