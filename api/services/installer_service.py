@@ -94,6 +94,34 @@ def _starter_kit_ref(starter_kit: str, auth_provider: str, teams: bool) -> str:
     return f"{package}:{branch}" if branch else package
 
 
+_REMOTE_FONT_IMPORT_RE = re.compile(
+    r"^\s*@import\s+url\(['\"]https?://fonts\.(?:bunny\.net|googleapis\.com)[^'\"]*['\"]\)\s*;\s*$",
+    re.MULTILINE,
+)
+
+
+def _strip_remote_font_imports(project_dir: Path) -> None:
+    """
+    Remove ``@import url(...)`` lines pulling Google/Bunny fonts into the
+    generated project's CSS.
+
+    Recent ``laravel-vite-plugin`` versions self-host these fonts by
+    fetching them from the network during ``npm run build`` (triggered by
+    chisel's ``install:features`` apply step). The installer server has no
+    route to those font CDNs, so the fetch hangs until it times out and
+    fails the whole build. Stripping the import keeps the build local;
+    the app simply falls back to the default Tailwind font stack.
+    """
+    css_dir = project_dir / "resources" / "css"
+    if not css_dir.is_dir():
+        return
+    for css_file in css_dir.rglob("*.css"):
+        original = css_file.read_text()
+        stripped = _REMOTE_FONT_IMPORT_RE.sub("", original)
+        if stripped != original:
+            css_file.write_text(stripped)
+
+
 def _build_env() -> dict[str, str]:
     """Return an os.environ copy augmented with the Composer global bin dir."""
     env = os.environ.copy()
@@ -271,6 +299,10 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
             )
 
         # ── 4. npm install (chisel apply callback needs node_modules) ─────────
+        # Strip remote Google/Bunny font imports first: laravel-vite-plugin
+        # self-hosts these by fetching them at build time, and this server
+        # has no network route to those font CDNs (see _strip_remote_font_imports).
+        _strip_remote_font_imports(project_dir)
         _run(["npm", "install"], cwd=project_dir, env=env, timeout=300)
 
         # ── 5. Sculpt auth features via chisel ───────────────────────────────
