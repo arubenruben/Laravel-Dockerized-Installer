@@ -1,12 +1,12 @@
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
+from services import github_service
+from contextlib import asynccontextmanager
+from dto.router.v1 import router as v1_router
+from dto.router.v2 import router as v2_router
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import RedirectResponse
-
 from dto.responses.health_response import HealthResponse
-from dto.router.v1 import router as v1_router
-from services import github_service
+
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +32,7 @@ app = FastAPI(
 )
 
 app.include_router(v1_router)
+app.include_router(v2_router)
 
 
 # ---------------------------------------------------------------------------

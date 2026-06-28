@@ -27,12 +27,28 @@ TEMPLATES: list[tuple[str, str]] = [
     ("README.docker.md.j2", "README.md"),
 ]
 
-# Templates injected into the server-generated Inertia project.
+# Templates injected into the server-generated Inertia project (v1: dev-only,
+# php-cli + php artisan serve).
 INERTIA_SERVER_TEMPLATES: list[tuple[str, str]] = [
     ("Dockerfile-inertia.j2", "Dockerfile"),
     ("docker-compose-inertia.yml.j2", "docker-compose.yml"),
     ("entrypoint.sh.j2", "entrypoint.sh"),
     ("README.inertia.md.j2", "README.md"),
+]
+
+# Templates injected into the server-generated Inertia project (v2: adds
+# staging/production stacks running php-fpm + nginx, with dev vs. stage/prod
+# entrypoints split out).
+INERTIA_SERVER_TEMPLATES_V2: list[tuple[str, str]] = [
+    ("Dockerfile-inertia-v2.j2", "Dockerfile"),
+    ("docker-compose-inertia-v2.yml.j2", "docker-compose.yml"),
+    ("docker-compose-inertia-stage.yml.j2", "docker-compose.stage.yml"),
+    ("docker-compose-inertia-prod.yml.j2", "docker-compose.prod.yml"),
+    ("nginx.conf.j2", "docker/nginx.conf"),
+    ("dev.entrypoint.sh.j2", "docker/dev.entrypoint.sh"),
+    ("prod.entrypoint.sh.j2", "docker/prod.entrypoint.sh"),
+    ("dockerignore.j2", ".dockerignore"),
+    ("README.inertia-v2.md.j2", "README.md"),
 ]
 
 # Composer package for each Inertia starter kit.
@@ -232,12 +248,14 @@ def build_docker_zip(upstream_zip_bytes: bytes, context: dict) -> io.BytesIO:
     return output_buffer
 
 
-async def build_inertia_project_zip(context: dict) -> io.BytesIO:
+async def build_inertia_project_zip(
+    context: dict, templates: list[tuple[str, str]] = INERTIA_SERVER_TEMPLATES
+) -> io.BytesIO:
     """
     Scaffolds a complete Laravel + Inertia.js project on the server and returns
     a Docker-ready zip. See ``_build_inertia_project_zip_sync`` for the full flow.
     """
-    return await asyncio.to_thread(_build_inertia_project_zip_sync, context)
+    return await asyncio.to_thread(_build_inertia_project_zip_sync, context, templates)
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +263,9 @@ async def build_inertia_project_zip(context: dict) -> io.BytesIO:
 # ---------------------------------------------------------------------------
 
 
-def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
+def _build_inertia_project_zip_sync(
+    context: dict, templates: list[tuple[str, str]] = INERTIA_SERVER_TEMPLATES
+) -> io.BytesIO:
     """
     Server-side project generation flow:
 
@@ -368,10 +388,11 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
                     break
 
         # ── 7. Write Docker scaffold files ────────────────────────────────────
-        ctx = {**context, "app_key": app_key}
-        for template_path, dest_path in INERTIA_SERVER_TEMPLATES:
+        ctx = {**context, "app_key": app_key, "app_slug": app_name}
+        for template_path, dest_path in templates:
             rendered = _jinja_env.get_template(template_path).render(ctx)
             dest = project_dir / dest_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(rendered)
             if dest_path.endswith(".sh"):
                 dest.chmod(0o755)
