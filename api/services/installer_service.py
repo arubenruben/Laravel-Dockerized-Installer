@@ -2,7 +2,9 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -11,6 +13,8 @@ import zipfile
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+logger = logging.getLogger(__name__)
 
 SCAFFOLD_DIR = Path(__file__).parent.parent / "scaffold"
 
@@ -23,12 +27,28 @@ TEMPLATES: list[tuple[str, str]] = [
     ("README.docker.md.j2", "README.md"),
 ]
 
-# Templates injected into the server-generated Inertia project.
+# Templates injected into the server-generated Inertia project (v1: dev-only,
+# php-cli + php artisan serve).
 INERTIA_SERVER_TEMPLATES: list[tuple[str, str]] = [
     ("Dockerfile-inertia.j2", "Dockerfile"),
     ("docker-compose-inertia.yml.j2", "docker-compose.yml"),
     ("entrypoint.sh.j2", "entrypoint.sh"),
     ("README.inertia.md.j2", "README.md"),
+]
+
+# Templates injected into the server-generated Inertia project (v2: adds
+# staging/production stacks running php-fpm + nginx, with dev vs. stage/prod
+# entrypoints split out).
+INERTIA_SERVER_TEMPLATES_V2: list[tuple[str, str]] = [
+    ("Dockerfile-inertia-v2.j2", "Dockerfile"),
+    ("docker-compose-inertia-v2.yml.j2", "docker-compose.yml"),
+    ("docker-compose-inertia-stage.yml.j2", "docker-compose.stage.yml"),
+    ("docker-compose-inertia-prod.yml.j2", "docker-compose.prod.yml"),
+    ("nginx.conf.j2", "docker/nginx.conf"),
+    ("dev.entrypoint.sh.j2", "docker/dev.entrypoint.sh"),
+    ("prod.entrypoint.sh.j2", "docker/prod.entrypoint.sh"),
+    ("dockerignore.j2", ".dockerignore"),
+    ("README.inertia-v2.md.j2", "README.md"),
 ]
 
 # Composer package for each Inertia starter kit.
@@ -65,6 +85,15 @@ def generate_app_key() -> str:
     return "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
 
 
+def slugify_app_name(app_name: str) -> str:
+    """
+    Turn a user-supplied app name into a safe slug usable as a single
+    filesystem path component (no ``..``, ``/``, or other separators).
+    """
+    slug = re.sub(r"[^a-z0-9-]+", "-", app_name.lower()).strip("-")
+    return slug or "app"
+
+
 def _starter_kit_ref(starter_kit: str, auth_provider: str, teams: bool) -> str:
     """
     Return the ``composer create-project`` package reference (name[:branch])
@@ -81,6 +110,73 @@ def _starter_kit_ref(starter_kit: str, auth_provider: str, teams: bool) -> str:
     return f"{package}:{branch}" if branch else package
 
 
+_REMOTE_FONT_IMPORT_RE = re.compile(
+    r"^\s*@import\s+url\(['\"]https?://fonts\.(?:bunny\.net|googleapis\.com)[^'\"]*['\"]\)\s*;\s*$",
+    re.MULTILINE,
+)
+
+
+def _strip_remote_font_imports(project_dir: Path) -> None:
+    """
+    Remove ``@import url(...)`` lines pulling Google/Bunny fonts into the
+    generated project's CSS.
+
+    Recent ``laravel-vite-plugin`` versions self-host these fonts by
+    fetching them from the network during ``npm run build`` (triggered by
+    chisel's ``install:features`` apply step). The installer server has no
+    route to those font CDNs, so the fetch hangs until it times out and
+    fails the whole build. Stripping the import keeps the build local;
+    the app simply falls back to the default Tailwind font stack.
+    """
+    css_dir = project_dir / "resources" / "css"
+    if not css_dir.is_dir():
+        return
+    for css_file in css_dir.rglob("*.css"):
+        original = css_file.read_text()
+        stripped = _REMOTE_FONT_IMPORT_RE.sub("", original)
+        if stripped != original:
+            css_file.write_text(stripped)
+
+
+_VITE_DEFINE_CONFIG_RE = re.compile(r"defineConfig\(\{")
+
+_VITE_DEV_SERVER_CONFIG = """server: {
+        host: '0.0.0.0',
+        hmr: {
+            host: 'localhost',
+        },
+    },
+"""
+
+
+def _configure_vite_dev_server(project_dir: Path) -> None:
+    """
+    Add an explicit ``server`` block to the generated ``vite.config.ts``.
+
+    The dev container runs ``vite --host``, which binds to all interfaces
+    (``::``) inside the container. Without an explicit ``server.hmr.host``,
+    laravel-vite-plugin falls back to that raw bind address when writing
+    ``public/hot``, producing an URL like ``http://[::]:5173`` that's
+    unreachable from the host browser. Laravel then can't detect the dev
+    server and falls back to the (nonexistent) production manifest,
+    raising ``ViteManifestNotFoundException``. Pinning ``host: '0.0.0.0'``
+    and ``hmr.host: 'localhost'`` keeps the container listening everywhere
+    while reporting the host-reachable address (via the ``5173:5173`` port
+    mapping) for assets/HMR.
+    """
+    vite_config = project_dir / "vite.config.ts"
+    if not vite_config.is_file():
+        return
+    original = vite_config.read_text()
+    if re.search(r"\bserver\s*:", original):
+        return
+    patched, count = _VITE_DEFINE_CONFIG_RE.subn(
+        "defineConfig({\n    " + _VITE_DEV_SERVER_CONFIG, original, count=1
+    )
+    if count:
+        vite_config.write_text(patched)
+
+
 def _build_env() -> dict[str, str]:
     """Return an os.environ copy augmented with the Composer global bin dir."""
     env = os.environ.copy()
@@ -94,8 +190,8 @@ def _build_env() -> dict[str, str]:
         )
         if result.stdout.strip():
             env["PATH"] = f"{result.stdout.strip()}:{env.get('PATH', '')}"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Could not determine Composer global bin-dir: %s", exc)
     return env
 
 
@@ -152,12 +248,14 @@ def build_docker_zip(upstream_zip_bytes: bytes, context: dict) -> io.BytesIO:
     return output_buffer
 
 
-async def build_inertia_project_zip(context: dict) -> io.BytesIO:
+async def build_inertia_project_zip(
+    context: dict, templates: list[tuple[str, str]] = INERTIA_SERVER_TEMPLATES
+) -> io.BytesIO:
     """
     Scaffolds a complete Laravel + Inertia.js project on the server and returns
     a Docker-ready zip. See ``_build_inertia_project_zip_sync`` for the full flow.
     """
-    return await asyncio.to_thread(_build_inertia_project_zip_sync, context)
+    return await asyncio.to_thread(_build_inertia_project_zip_sync, context, templates)
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +263,9 @@ async def build_inertia_project_zip(context: dict) -> io.BytesIO:
 # ---------------------------------------------------------------------------
 
 
-def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
+def _build_inertia_project_zip_sync(
+    context: dict, templates: list[tuple[str, str]] = INERTIA_SERVER_TEMPLATES
+) -> io.BytesIO:
     """
     Server-side project generation flow:
 
@@ -173,17 +273,20 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
        deps without running any post-install artisan commands or migrations.
     2. Copy ``.env.example`` → ``.env``, run ``package:discover``,
        ``key:generate``.
-    3. ``npm install`` — required before ``install:features`` because chisel's
+    3. If ``testing_framework == "pest"``, swap PHPUnit for Pest
+       (``composer remove phpunit/phpunit``, ``composer require pestphp/pest``,
+       ``php artisan pest:install``).
+    4. ``npm install`` — required before ``install:features`` because chisel's
        ``apply`` callback runs ``npm run lint`` / ``npm run format``.
-    4. ``php artisan install:features --no-interaction --answers=<json>`` —
+    5. ``php artisan install:features --no-interaction --answers=<json>`` —
        sculpts the project according to the requested auth features (default: none).
-    5. Read the generated APP_KEY; render and write Docker scaffold files.
-    6. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
+    6. Read the generated APP_KEY; render and write Docker scaffold files.
+    7. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
        hostnames, Redis, etc.).
-    7. Zip everything except ``vendor/``, ``node_modules/``, ``.git/``,
+    8. Zip everything except ``vendor/``, ``node_modules/``, ``.git/``,
        and ``public/build/`` (Vite handles assets at runtime).
     """
-    app_name = context["app_name"].lower().replace(" ", "-")
+    app_name = slugify_app_name(context["app_name"])
     env = _build_env()
 
     # Optional: install laravel/boost globally
@@ -232,10 +335,37 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
             timeout=60,
         )
 
-        # ── 3. npm install (chisel apply callback needs node_modules) ─────────
+        # ── 3. Swap the test runner to Pest, if requested ─────────────────────
+        if context.get("testing_framework") == "pest":
+            _run(
+                ["composer", "remove", "phpunit/phpunit", "--dev", "--no-interaction"],
+                cwd=project_dir,
+                env=env,
+                timeout=120,
+                check=False,
+            )
+            _run(
+                ["composer", "require", "pestphp/pest", "--dev", "--no-interaction", "-W"],
+                cwd=project_dir,
+                env=env,
+                timeout=180,
+            )
+            _run(
+                ["php", "artisan", "pest:install", "--no-interaction"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+
+        # ── 4. npm install (chisel apply callback needs node_modules) ─────────
+        # Strip remote Google/Bunny font imports first: laravel-vite-plugin
+        # self-hosts these by fetching them at build time, and this server
+        # has no network route to those font CDNs (see _strip_remote_font_imports).
+        _strip_remote_font_imports(project_dir)
+        _configure_vite_dev_server(project_dir)
         _run(["npm", "install"], cwd=project_dir, env=env, timeout=300)
 
-        # ── 4. Sculpt auth features via chisel ───────────────────────────────
+        # ── 5. Sculpt auth features via chisel ───────────────────────────────
         # Default: no features. Pass explicit list to select specific ones.
         auth_features: list[str] = [
             f for f in context.get("auth_features", []) if f in AUTH_FEATURE_KEYS
@@ -248,7 +378,7 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
             timeout=300,
         )
 
-        # ── 5. Read APP_KEY ───────────────────────────────────────────────────
+        # ── 6. Read APP_KEY ───────────────────────────────────────────────────
         app_key = ""
         env_file = project_dir / ".env"
         if env_file.exists():
@@ -257,11 +387,12 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
                     app_key = line.split("=", 1)[1].strip()
                     break
 
-        # ── 6. Write Docker scaffold files ────────────────────────────────────
-        ctx = {**context, "app_key": app_key}
-        for template_path, dest_path in INERTIA_SERVER_TEMPLATES:
+        # ── 7. Write Docker scaffold files ────────────────────────────────────
+        ctx = {**context, "app_key": app_key, "app_slug": app_name}
+        for template_path, dest_path in templates:
             rendered = _jinja_env.get_template(template_path).render(ctx)
             dest = project_dir / dest_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(rendered)
             if dest_path.endswith(".sh"):
                 dest.chmod(0o755)
@@ -270,7 +401,7 @@ def _build_inertia_project_zip_sync(context: dict) -> io.BytesIO:
         (project_dir / ".env.docker").write_text(env_docker)
         (project_dir / ".env").write_text(env_docker)  # ready for docker compose
 
-        # ── 7. Zip the project ────────────────────────────────────────────────
+        # ── 8. Zip the project ────────────────────────────────────────────────
         _EXCLUDE_TOPS = {"vendor", "node_modules", ".git"}
 
         output_buffer = io.BytesIO()

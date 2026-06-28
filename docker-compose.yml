@@ -1,0 +1,9 @@
+services:
+  api:
+    image: ghcr.io/arubenruben/laravel-dockerized-installer:${IMAGE_TAG:-latest}
+    container_name: ${CONTAINER_NAME:-laravel_installer_api}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    environment:
+      PYTHONUNBUFFERED: "1"

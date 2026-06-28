@@ -1,7 +1,7 @@
-FROM php:{{ php_version }}-cli-alpine
+FROM php:{{ php_version }}-fpm-alpine
 
 RUN apk add --no-cache \
-    bash curl zip unzip git libpng-dev libjpeg-turbo-dev freetype-dev \
+    bash curl zip unzip git nginx nodejs npm libpng-dev libjpeg-turbo-dev freetype-dev \
     oniguruma-dev libxml2-dev && \
     docker-php-ext-configure gd --with-freetype --with-jpeg && \
 {% if db == 'mysql' %}
@@ -15,16 +15,27 @@ RUN apk add --no-cache \
 {% endif %}
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY docker/nginx.conf /etc/nginx/http.d/default.conf
 
 WORKDIR /var/www/html
 COPY . .
+
+RUN composer install --optimize-autoloader --no-dev --no-interaction
+
+# A throwaway .env (removed before the layer ends) lets Laravel boot during
+# `npm run build` — the Wayfinder Vite plugin needs a running app to
+# generate its typed route helpers.
+RUN cp .env.example .env && php artisan key:generate --ansi --force && \
+    npm install && npm run build && rm -f .env
+
+RUN chown -R www-data:www-data storage bootstrap/cache
 
 # Storage/bootstrap dirs are created by the entrypoint at runtime after
 # the volume mount is in place. Invoked via `sh` (not directly) because the
 # bind mount in docker-compose.yml replaces this file with the host copy at
 # runtime, and zip extraction on some platforms (notably Windows) drops the
 # executable bit — running it as an argument to `sh` avoids depending on it.
-RUN chmod +x entrypoint.sh
+RUN chmod +x docker/dev.entrypoint.sh docker/prod.entrypoint.sh
 
-EXPOSE 8000
-CMD ["sh", "entrypoint.sh"]
+EXPOSE 80
+CMD ["sh", "docker/prod.entrypoint.sh"]

@@ -1,6 +1,4 @@
-fastapi[standard]
-pydantic
-pydantic-settings
-environs
-httpx
-jinja2
+fastapi[standard]~=0.138.0
+pydantic~=2.13.4
+httpx~=0.28.1
+jinja2~=3.1.6

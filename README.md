@@ -1,3 +1,12 @@
+---
+title: Laravel Dockerized Installer
+emoji: 🐳
+colorFrom: red
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 # Laravel Dockerized Installer
 
 A FastAPI service that generates ready-to-use Docker-packaged Laravel projects on demand.

@@ -5,6 +5,7 @@ services:
     container_name: laravel_app
     restart: unless-stopped
     working_dir: /var/www/html
+    command: ["sh", "docker/dev.entrypoint.sh"]
     ports:
       - "{{ app_port }}:8000"
     volumes:
