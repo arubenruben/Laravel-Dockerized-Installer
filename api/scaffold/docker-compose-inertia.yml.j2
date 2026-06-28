@@ -2,7 +2,7 @@
 services:
   app:
     build: .
-    container_name: laravel_app
+    container_name: {{ app_slug }}_app
     restart: unless-stopped
     working_dir: /var/www/html
     ports:
@@ -43,7 +43,7 @@ services:
 
   vite:
     image: php:{{ php_version }}-cli-alpine
-    container_name: laravel_vite
+    container_name: {{ app_slug }}_vite
     restart: unless-stopped
     working_dir: /var/www/html
     command: >
@@ -66,7 +66,7 @@ services:
 {% if db == 'mysql' %}
   db:
     image: mysql:8.0
-    container_name: laravel_db
+    container_name: {{ app_slug }}_db
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: laravel
@@ -86,7 +86,7 @@ services:
 {% elif db == 'postgres' %}
   db:
     image: postgres:16-alpine
-    container_name: laravel_db
+    container_name: {{ app_slug }}_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: laravel
