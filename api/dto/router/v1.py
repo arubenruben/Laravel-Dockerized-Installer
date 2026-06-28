@@ -1,12 +1,22 @@
+import logging
 from typing import List, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from services import github_service
-from services.installer_service import AUTH_FEATURE_KEYS, build_docker_zip, build_inertia_project_zip
+from services.installer_service import (
+    AUTH_FEATURE_KEYS,
+    build_docker_zip,
+    build_inertia_project_zip,
+    slugify_app_name,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["v1"])
+
+PHP_VERSION_PATTERN = r"^\d+\.\d+$"
 
 
 @router.get(
@@ -30,7 +40,8 @@ async def download(
     ),
     php_version: str = Query(
         default="8.4",
-        description="PHP version used in the Dockerfile (e.g. 8.4, 8.4)",
+        pattern=PHP_VERSION_PATTERN,
+        description="PHP version used in the Dockerfile (e.g. 8.4, 8.2)",
     ),
     app_port: int = Query(
         default=8080,
@@ -167,6 +178,7 @@ async def new_inertia(
     # ── Shared Docker parameters ─────────────────────────────────────────────
     php_version: str = Query(
         default="8.4",
+        pattern=PHP_VERSION_PATTERN,
         description="PHP version used in the generated Dockerfile (e.g. 8.4, 8.2).",
     ),
     app_port: int = Query(
@@ -223,12 +235,13 @@ async def new_inertia(
     try:
         output_buffer = await build_inertia_project_zip(template_context)
     except Exception as exc:
+        logger.exception("Project generation failed for app_name=%r", app_name)
         raise HTTPException(
             status_code=500,
-            detail=f"Project generation failed: {exc}",
+            detail="Project generation failed. Please try again or report this issue.",
         ) from exc
 
-    app_slug = app_name.lower().replace(" ", "-")
+    app_slug = slugify_app_name(app_name)
     filename = f"laravel-{app_slug}-inertia-{starter_kit}-docker.zip"
     return StreamingResponse(
         output_buffer,

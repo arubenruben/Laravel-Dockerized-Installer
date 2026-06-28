@@ -48,21 +48,20 @@ services:
     working_dir: /var/www/html
     command: >
       sh -c "apk add --no-cache nodejs npm &&
+             echo 'Waiting for composer dependencies...' &&
+             until [ -f vendor/autoload.php ]; do sleep 2; done &&
              npm install &&
              npm run dev -- --host"
     ports:
       - "5173:5173"
     volumes:
-      - .:/var/www/html
+      - .:/var/www/html      
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:5173 || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5173/@vite/client || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    depends_on:
-      app:
-        condition: service_healthy
 
 {% if db == 'mysql' %}
   db:
@@ -105,7 +104,8 @@ services:
       start_period: 30s
 {% endif %}
 
-{% if db != 'sqlite' %}
 volumes:
+  vite_node_modules:
+{% if db != 'sqlite' %}
   db_data:
 {% endif %}

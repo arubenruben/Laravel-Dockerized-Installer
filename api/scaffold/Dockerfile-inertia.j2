@@ -19,9 +19,12 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 WORKDIR /var/www/html
 COPY . .
 
-# Make the entrypoint executable; storage/bootstrap dirs are created by
-# the entrypoint at runtime after the volume mount is in place.
+# Storage/bootstrap dirs are created by the entrypoint at runtime after
+# the volume mount is in place. Invoked via `sh` (not directly) because the
+# bind mount in docker-compose.yml replaces this file with the host copy at
+# runtime, and zip extraction on some platforms (notably Windows) drops the
+# executable bit — running it as an argument to `sh` avoids depending on it.
 RUN chmod +x entrypoint.sh
 
 EXPOSE 8000
-CMD ["./entrypoint.sh"]
+CMD ["sh", "entrypoint.sh"]
