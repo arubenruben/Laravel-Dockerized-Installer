@@ -177,6 +177,107 @@ def _configure_vite_dev_server(project_dir: Path) -> None:
         vite_config.write_text(patched)
 
 
+_WITH_MIDDLEWARE_RE = re.compile(
+    r"(->withMiddleware\(function \(Middleware \$middleware\)(?:: void)?\s*\{\n)"
+)
+
+_TRUST_PROXIES_SNIPPET = """        // The app container is only ever reached through the Docker
+        // reverse proxy (see docker-compose.*.yml), which terminates TLS
+        // and forwards plain HTTP with X-Forwarded-* headers. Without
+        // trusting it, Laravel sees every request as HTTP and generates
+        // insecure (http://) URLs for assets, redirects, etc., and
+        // $request->ip() resolves to the proxy instead of the real client.
+        $middleware->trustProxies(
+            at: '*',
+            headers: SymfonyRequest::HEADER_X_FORWARDED_FOR
+                | SymfonyRequest::HEADER_X_FORWARDED_HOST
+                | SymfonyRequest::HEADER_X_FORWARDED_PORT
+                | SymfonyRequest::HEADER_X_FORWARDED_PROTO,
+        );
+
+"""
+
+_LAST_USE_STATEMENT_RE = re.compile(r"(^use [^\n]+;\n)(?!use )", re.MULTILINE)
+
+
+def _configure_trusted_proxies(project_dir: Path) -> None:
+    """
+    Trust the Docker reverse proxy's forwarded headers in ``bootstrap/app.php``.
+
+    The generated app container is only reachable through an external
+    TLS-terminating reverse proxy on the Docker ``proxy-net`` network, which
+    forwards plain HTTP. Without ``trustProxies``, ``Request::isSecure()``
+    always evaluates to false (causing Vite/route URLs to be generated as
+    ``http://`` and get blocked as mixed content once loaded over HTTPS),
+    and ``$request->ip()`` resolves to the proxy rather than the real
+    client, silently breaking per-IP rate limiting (e.g. Fortify's login
+    throttle).
+    """
+    app_php = project_dir / "bootstrap" / "app.php"
+    if not app_php.is_file():
+        return
+    original = app_php.read_text()
+    if "trustProxies" in original:
+        return
+    patched, count = _WITH_MIDDLEWARE_RE.subn(
+        r"\1" + _TRUST_PROXIES_SNIPPET, original, count=1
+    )
+    if not count:
+        return
+    if "Symfony\\Component\\HttpFoundation\\Request as SymfonyRequest" not in patched:
+        patched, import_count = _LAST_USE_STATEMENT_RE.subn(
+            r"\1use Symfony\\Component\\HttpFoundation\\Request as SymfonyRequest;\n",
+            patched,
+            count=1,
+        )
+        if not import_count:
+            return
+    app_php.write_text(patched)
+
+
+_BOOT_METHOD_RE = re.compile(r"(public function boot\(\): void\s*\{\n)")
+
+_FORCE_SCHEME_SNIPPET = """        // The app container sits behind a reverse proxy that terminates TLS
+        // and forwards plain HTTP, so Laravel sees every request as
+        // insecure. Force the scheme from APP_URL rather than trusting
+        // proxy headers, so generated asset/route URLs stay HTTPS even if
+        // the proxy ever fails to forward X-Forwarded-Proto correctly.
+        if (str_starts_with(config('app.url'), 'https://')) {
+            URL::forceScheme('https');
+        }
+
+"""
+
+
+def _configure_force_https_scheme(project_dir: Path) -> None:
+    """
+    Force the URL scheme from ``APP_URL`` in ``AppServiceProvider::boot()``.
+
+    Acts as a fallback independent of proxy headers, alongside
+    ``_configure_trusted_proxies``: if the reverse proxy ever fails to
+    forward ``X-Forwarded-Proto``, generated URLs still stay ``https://``
+    whenever ``APP_URL`` itself is HTTPS.
+    """
+    provider_php = project_dir / "app" / "Providers" / "AppServiceProvider.php"
+    if not provider_php.is_file():
+        return
+    original = provider_php.read_text()
+    if "forceScheme" in original:
+        return
+    patched, count = _BOOT_METHOD_RE.subn(
+        r"\1" + _FORCE_SCHEME_SNIPPET, original, count=1
+    )
+    if not count:
+        return
+    if "Illuminate\\Support\\Facades\\URL" not in patched:
+        patched, import_count = _LAST_USE_STATEMENT_RE.subn(
+            r"\1use Illuminate\\Support\\Facades\\URL;\n", patched, count=1
+        )
+        if not import_count:
+            return
+    provider_php.write_text(patched)
+
+
 def _build_env() -> dict[str, str]:
     """Return an os.environ copy augmented with the Composer global bin dir."""
     env = os.environ.copy()
@@ -363,6 +464,8 @@ def _build_inertia_project_zip_sync(
         # has no network route to those font CDNs (see _strip_remote_font_imports).
         _strip_remote_font_imports(project_dir)
         _configure_vite_dev_server(project_dir)
+        _configure_trusted_proxies(project_dir)
+        _configure_force_https_scheme(project_dir)
         _run(["npm", "install"], cwd=project_dir, env=env, timeout=300)
 
         # ── 5. Sculpt auth features via chisel ───────────────────────────────
