@@ -208,7 +208,6 @@ def test_stack_worker_runs_queue_work_through_the_entrypoint_worker_mode(client,
     assert worker["command"] == [
         "sh",
         "docker/prod.entrypoint.sh",
-        "worker",
         "php",
         "artisan",
         "queue:work",
@@ -273,7 +272,7 @@ def test_stack_keeps_its_database_volume_next_to_redis(client, stack):
     compose = _compose(_get_project(client, db="mysql", queue="redis"), stack)
     suffix = "stage" if "stage" in stack else "prod"
 
-    assert set(compose["volumes"]) == {f"db_data_{suffix}", f"redis_data_{suffix}"}
+    assert set(compose["volumes"]) == {f"db_data_{suffix}", f"redis_data_{suffix}", f"storage_data_{suffix}"}
 
 
 @pytest.mark.parametrize("stack", ALL_STACKS)
@@ -301,10 +300,11 @@ def test_sync_has_no_worker_and_no_redis_in_any_stack(client, stack, db):
 
 
 @pytest.mark.parametrize("stack", STACKS)
-def test_sync_stack_volumes_hold_only_the_database(client, stack):
+def test_sync_stack_volumes_hold_only_storage_and_the_database(client, stack):
     compose = _compose(_get_project(client, db="mysql", queue="sync"), stack)
+    suffix = "stage" if "stage" in stack else "prod"
 
-    assert list(compose["volumes"]) == ["db_data_stage" if "stage" in stack else "db_data_prod"]
+    assert set(compose["volumes"]) == {f"db_data_{suffix}", f"storage_data_{suffix}"}
 
 
 def test_sync_env_keeps_jobs_inline(client):
@@ -339,26 +339,36 @@ def _entrypoint(client, tmp_path, **params) -> str:
     return str(script)
 
 
-@pytest.mark.parametrize("db", DBS)
-def test_entrypoint_worker_mode_hands_the_command_to_su_exec_before_migrating(client, tmp_path, db):
-    """Runs the rendered script with a fake ``su-exec``; ``php`` is absent, so migrating would fail."""
-    script = _entrypoint(client, tmp_path, db=db)
+def _fake_commands(tmp_path) -> dict[str, str]:
+    """An env whose PATH starts with fakes that print their command line.
+
+    The real su-exec, chown to www-data, find and artisan need root, that user and a Laravel app.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    fake = bin_dir / "su-exec"
-    fake.write_text('#!/bin/sh\necho "su-exec $*"\n')
-    fake.chmod(0o755)
+    for name in ("su-exec", "php", "find", "chown", "php-fpm", "nginx"):
+        fake = bin_dir / name
+        fake.write_text(f'#!/bin/sh\necho "{name} $*"\n')
+        fake.chmod(0o755)
+    return {"PATH": f"{bin_dir}:/bin:/usr/bin"}
+
+
+@pytest.mark.parametrize("db", DBS)
+def test_entrypoint_worker_mode_hands_the_command_to_su_exec_without_migrating(client, tmp_path, db):
+    script = _entrypoint(client, tmp_path, db=db)
 
     result = subprocess.run(
-        ["sh", script, "worker", "php", "artisan", "queue:work", "--sleep=3"],
+        ["sh", script, "php", "artisan", "queue:work", "--sleep=3"],
         capture_output=True,
         text=True,
-        env={"PATH": f"{bin_dir}:/bin:/usr/bin"},
+        env=_fake_commands(tmp_path),
         cwd=tmp_path,
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "su-exec www-data php artisan queue:work --sleep=3\n"
+    lines = result.stdout.splitlines()
+    assert lines[-1] == "su-exec www-data php artisan queue:work --sleep=3"
+    assert not any("migrate" in line or line.startswith(("php-fpm", "nginx")) for line in lines)
 
 
 @pytest.mark.parametrize("db", DBS)
@@ -371,8 +381,8 @@ def test_entrypoint_is_valid_shell(client, tmp_path, db):
 def test_entrypoint_worker_mode_is_checked_before_the_app_startup(client, tmp_path):
     script = open(_entrypoint(client, tmp_path)).read()
 
-    assert script.index('"${1:-}" = "worker"') < script.index("php artisan migrate")
-    assert script.index('"${1:-}" = "worker"') < script.index("exec nginx")
+    assert script.index('"$#" -gt 0') < script.index("php artisan migrate")
+    assert script.index('"$#" -gt 0') < script.index("exec nginx")
 
 
 # ── Generated .env ───────────────────────────────────────────────────────────

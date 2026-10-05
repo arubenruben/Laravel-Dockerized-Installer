@@ -7,6 +7,11 @@ set -e
 echo "==> Installing Composer dependencies..."
 composer install --optimize-autoloader --no-interaction --no-progress --no-ansi
 
+# public/storage → storage/app/public, so files on the `public` disk are served.
+# It is not created by composer install, and the checked-out project may not
+# have it yet (public/storage is git-ignored).
+[ -L public/storage ] || php artisan storage:link --no-interaction
+
 {% if db == 'sqlite' %}
 # ── 2. Ensure the SQLite database file exists ────────────────────────────────
 mkdir -p database
