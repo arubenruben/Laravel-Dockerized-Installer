@@ -240,7 +240,6 @@ def test_stack_database_queue_has_no_redis(client, stack):
 def test_stack_redis_is_password_protected_and_persistent(client, stack, db):
     compose = _compose(_get_project(client, db=db, queue="redis"), stack)
     redis = compose["services"]["redis"]
-    suffix = "stage" if "stage" in stack else "prod"
 
     assert redis["image"] == "redis:7-alpine"
     assert redis["command"] == [
@@ -248,8 +247,8 @@ def test_stack_redis_is_password_protected_and_persistent(client, stack, db):
         "-c",
         'redis-server --requirepass "$$REDIS_PASSWORD" --save 60 1 --appendonly yes',
     ]
-    assert redis["volumes"] == [f"redis_data_{suffix}:/data"]
-    assert f"redis_data_{suffix}" in compose["volumes"]
+    assert redis["volumes"] == ["redis_data:/data"]
+    assert "redis_data" in compose["volumes"]
     assert redis["healthcheck"]["test"][0] == "CMD-SHELL"
     assert 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping' in redis["healthcheck"]["test"][1]
     assert compose["services"]["app"]["depends_on"]["redis"] == {"condition": "service_healthy"}
@@ -270,9 +269,8 @@ def test_stack_redis_queue_refuses_to_start_without_a_password(client, stack):
 @pytest.mark.parametrize("stack", STACKS)
 def test_stack_keeps_its_database_volume_next_to_redis(client, stack):
     compose = _compose(_get_project(client, db="mysql", queue="redis"), stack)
-    suffix = "stage" if "stage" in stack else "prod"
 
-    assert set(compose["volumes"]) == {f"db_data_{suffix}", f"redis_data_{suffix}", f"storage_data_{suffix}"}
+    assert set(compose["volumes"]) == {"db_data", "redis_data", "storage_data"}
 
 
 @pytest.mark.parametrize("stack", ALL_STACKS)
@@ -302,9 +300,8 @@ def test_sync_has_no_worker_and_no_redis_in_any_stack(client, stack, db):
 @pytest.mark.parametrize("stack", STACKS)
 def test_sync_stack_volumes_hold_only_storage_and_the_database(client, stack):
     compose = _compose(_get_project(client, db="mysql", queue="sync"), stack)
-    suffix = "stage" if "stage" in stack else "prod"
 
-    assert set(compose["volumes"]) == {f"db_data_{suffix}", f"storage_data_{suffix}"}
+    assert set(compose["volumes"]) == {"db_data", "storage_data"}
 
 
 def test_sync_env_keeps_jobs_inline(client):

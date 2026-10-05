@@ -27,9 +27,14 @@ TEMPLATES: list[tuple[str, str]] = [
     ("README.docker.md.j2", "README.md"),
 ]
 
+# A template entry for the server-generated Inertia projects: (template file,
+# destination path), plus an optional dict of extra context for rendering that
+# one file (see ``INERTIA_SERVER_TEMPLATES_V2``).
+TemplateSpec = tuple[str, str] | tuple[str, str, dict]
+
 # Templates injected into the server-generated Inertia project (v1: dev-only,
 # php-cli + php artisan serve).
-INERTIA_SERVER_TEMPLATES: list[tuple[str, str]] = [
+INERTIA_SERVER_TEMPLATES: list[TemplateSpec] = [
     ("Dockerfile-inertia.j2", "Dockerfile"),
     ("docker-compose-inertia.yml.j2", "docker-compose.yml"),
     ("entrypoint.sh.j2", "entrypoint.sh"),
@@ -38,12 +43,22 @@ INERTIA_SERVER_TEMPLATES: list[tuple[str, str]] = [
 
 # Templates injected into the server-generated Inertia project (v2: adds
 # staging/production stacks running php-fpm + nginx, with dev vs. stage/prod
-# entrypoints split out).
-INERTIA_SERVER_TEMPLATES_V2: list[tuple[str, str]] = [
+# entrypoints split out). Both stacks render the same deploy template; the
+# extra context sets what differs: ``deploy_env`` is the value of ``APP_ENV``,
+# ``env_suffix`` names the Compose project, containers and file.
+INERTIA_SERVER_TEMPLATES_V2: list[TemplateSpec] = [
     ("Dockerfile-inertia-v2.j2", "Dockerfile"),
     ("docker-compose-inertia-v2.yml.j2", "docker-compose.yml"),
-    ("docker-compose-inertia-stage.yml.j2", "docker-compose.stage.yml"),
-    ("docker-compose-inertia-prod.yml.j2", "docker-compose.prod.yml"),
+    (
+        "docker-compose-inertia-deploy.yml.j2",
+        "docker-compose.stage.yml",
+        {"deploy_env": "staging", "env_suffix": "stage"},
+    ),
+    (
+        "docker-compose-inertia-deploy.yml.j2",
+        "docker-compose.prod.yml",
+        {"deploy_env": "production", "env_suffix": "prod"},
+    ),
     ("nginx.conf.j2", "docker/nginx.conf"),
     ("php.ini.j2", "docker/php/app.ini"),
     ("dev.entrypoint.sh.j2", "docker/dev.entrypoint.sh"),
@@ -522,7 +537,7 @@ def build_docker_zip(upstream_zip_bytes: bytes, context: dict) -> io.BytesIO:
 
 
 async def build_inertia_project_zip(
-    context: dict, templates: list[tuple[str, str]] = INERTIA_SERVER_TEMPLATES
+    context: dict, templates: list[TemplateSpec] = INERTIA_SERVER_TEMPLATES
 ) -> io.BytesIO:
     """
     Scaffolds a complete Laravel + Inertia.js project on the server and returns
@@ -537,7 +552,7 @@ async def build_inertia_project_zip(
 
 
 def _build_inertia_project_zip_sync(
-    context: dict, templates: list[tuple[str, str]] = INERTIA_SERVER_TEMPLATES
+    context: dict, templates: list[TemplateSpec] = INERTIA_SERVER_TEMPLATES
 ) -> io.BytesIO:
     """
     Server-side project generation flow:
@@ -799,8 +814,8 @@ def _build_inertia_project_zip_sync(
 
         # ── 7. Write Docker scaffold files ────────────────────────────────────
         ctx = {**context, "app_key": app_key, "app_slug": app_name}
-        for template_path, dest_path in templates:
-            rendered = _jinja_env.get_template(template_path).render(ctx)
+        for template_path, dest_path, *extra in templates:
+            rendered = _jinja_env.get_template(template_path).render({**ctx, **(extra[0] if extra else {})})
             dest = project_dir / dest_path
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(rendered)
