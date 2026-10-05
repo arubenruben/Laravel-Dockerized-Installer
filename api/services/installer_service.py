@@ -443,7 +443,9 @@ def _build_inertia_project_zip_sync(
        ``./vendor/bin/pest --init``). Every Composer call before step 5 runs
        with ``--no-scripts`` — see the note in step 3.
        If ``queue == "redis"``, ``composer require predis/predis`` (same rule),
-       then ``package:discover``.
+       then ``package:discover``. If ``horizon`` is set, ``composer require
+       laravel/horizon`` (same rule), ``package:discover`` and
+       ``horizon:install``.
     4. ``npm install`` — required before ``install:features`` because chisel's
        ``apply`` callback runs ``npm run lint`` / ``npm run format``.
     5. ``php artisan install:features --no-interaction --answers=<json>`` —
@@ -563,6 +565,36 @@ def _build_inertia_project_zip_sync(
             )
             _run(
                 ["php", "artisan", "package:discover", "--ansi"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+
+        # ── 3c. Laravel Horizon ───────────────────────────────────────────────
+        # Same ``--no-scripts`` rule as step 3. The image has ``pcntl`` and
+        # ``posix``, which Horizon requires, but this host may not; Composer
+        # would refuse the install here, so those platform checks are skipped.
+        # ``horizon:install`` publishes ``config/horizon.php`` and
+        # ``HorizonServiceProvider`` and registers the provider in
+        # ``bootstrap/providers.php``; it needs the package discovered first.
+        if context.get("horizon"):
+            _run(
+                [
+                    "composer", "require", "laravel/horizon", "--no-interaction", "--no-scripts",
+                    "--ignore-platform-req=ext-pcntl", "--ignore-platform-req=ext-posix",
+                ],
+                cwd=project_dir,
+                env=env,
+                timeout=180,
+            )
+            _run(
+                ["php", "artisan", "package:discover", "--ansi"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+            _run(
+                ["php", "artisan", "horizon:install", "--no-interaction"],
                 cwd=project_dir,
                 env=env,
                 timeout=60,

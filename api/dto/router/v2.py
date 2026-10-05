@@ -45,6 +45,7 @@ PHP_VERSION_PATTERN = r"^\d+\.\d+$"
             "content": {"application/zip": {}},
             "description": "Ready-to-run Laravel + Inertia.js Docker project zip",
         },
+        422: {"description": "Invalid parameters, e.g. `horizon=true` without `queue=redis`"},
         500: {"description": "Server-side project generation failed"},
     },
     tags=["v2"],
@@ -125,6 +126,15 @@ async def new_inertia(
             "in the web request."
         ),
     ),
+    horizon: bool = Query(
+        default=False,
+        description=(
+            "Run the queue with Laravel Horizon instead of a plain `queue:listen` / `queue:work` "
+            "worker: installs `laravel/horizon` (config, `HorizonServiceProvider`, dashboard at "
+            "`/horizon`) and makes the `worker` service run `php artisan horizon`. Requires "
+            "`queue=redis`; any other `queue` is rejected with a `422`."
+        ),
+    ),
     app_name: str = Query(
         default="my-app",
         description=(
@@ -142,12 +152,13 @@ async def new_inertia(
     - ``Dockerfile`` – PHP ``php_version``-fpm image; builds assets (``npm run build``) and
       installs Composer dependencies at build time, serves via nginx + php-fpm
     - ``docker-compose.yml`` – dev stack: app (``php artisan serve``) + **vite** (Node 20) +
-      **worker** (``queue:listen``, unless ``queue=sync``) + db (+ redis when ``queue=redis``),
-      app on ``app_port``, Vite on 5173
+      **worker** (``queue:listen``, or ``php artisan horizon`` when ``horizon=true``; none when
+      ``queue=sync``) + db (+ redis when ``queue=redis``), app on ``app_port``, Vite on 5173
     - ``docker-compose.stage.yml`` / ``docker-compose.prod.yml`` – nginx + php-fpm stacks built
       from the same Dockerfile, no source bind mount or Vite sidecar, secrets via env vars, plus
-      a **worker** (``queue:work``, run as ``www-data``, unless ``queue=sync``) that reuses the
-      app image (and a password-protected, persistent redis when ``queue=redis``)
+      a **worker** (``queue:work``, or ``php artisan horizon`` when ``horizon=true``; run as
+      ``www-data``, none when ``queue=sync``) that reuses the app image (and a password-protected,
+      persistent redis when ``queue=redis``)
     - ``docker/nginx.conf``, ``docker/dev.entrypoint.sh``, ``docker/prod.entrypoint.sh`` –
       nginx vhost (with ``client_max_body_size`` and larger FastCGI header buffers) and the
       dev/stage-prod entrypoint scripts (the latter also has a ``worker`` mode)
@@ -167,6 +178,9 @@ async def new_inertia(
             detail=f"Unknown auth_features: {unknown}. Valid values: {sorted(AUTH_FEATURE_KEYS)}",
         )
 
+    if horizon and queue != "redis":
+        raise HTTPException(status_code=422, detail="horizon=true requires queue=redis.")
+
     template_context = {
         "php_version": php_version,
         "app_port": str(app_port),
@@ -175,6 +189,7 @@ async def new_inertia(
         "post_max_mb": max_upload_mb + 2,
         "db": db,
         "queue": queue,
+        "horizon": horizon,
         "app_name": app_name,
         "starter_kit": starter_kit,
         "auth_provider": auth_provider,
