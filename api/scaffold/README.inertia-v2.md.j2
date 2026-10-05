@@ -50,6 +50,7 @@ Telescope: `http://localhost:{{ app_port }}/telescope`{% endif %}
 | Queue | {{ queue }} |
 {% if horizon %}| Horizon | yes |
 {% endif %}| PHP version | {{ php_version }} |
+| Locale | `{{ locale }}` (`APP_LOCALE` and `APP_FALLBACK_LOCALE`; set either at deploy time to override it in staging and production) |
 | Max upload size | {{ max_upload_mb }} MB (request body limit {{ post_max_mb }} MB) |
 {% if proxy_network %}| Proxy network | `{{ proxy_network }}` (external; staging/production `app` joins it and publishes no host port) |
 {% endif %}{% if install_boost %}| Laravel Boost | yes |

@@ -69,8 +69,10 @@ x-app-environment: &app-environment
   # Base URL for links built outside a request (queued mail, CLI). An https:// URL
   # also makes the app force https:// for every URL it generates.
   APP_URL: ${APP_URL:?APP_URL must be set, e.g. https://app.example.com}
-  APP_LOCALE: ${APP_LOCALE:-en}
-  APP_FALLBACK_LOCALE: ${APP_FALLBACK_LOCALE:-en}
+  # The image has no .env, so without these config/app.php would fall back to `en`.
+  # `{{ locale }}` is the locale the project was generated with; set either variable at deploy time to change it.
+  APP_LOCALE: ${APP_LOCALE:-{{ locale }}}
+  APP_FALLBACK_LOCALE: ${APP_FALLBACK_LOCALE:-{{ locale }}}
 {% if db == 'mysql' %}
   DB_CONNECTION: mysql
   DB_HOST: db

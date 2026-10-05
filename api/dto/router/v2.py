@@ -18,6 +18,8 @@ router = APIRouter(prefix="/v2", tags=["v2"])
 PHP_VERSION_PATTERN = r"^\d+\.\d+$"
 # What Docker accepts as a network name.
 PROXY_NETWORK_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+# A Laravel locale code: ``pt``, ``fil``, ``pt_BR``.
+LOCALE_PATTERN = r"^[a-z]{2,3}(_[A-Z]{2})?$"
 
 
 # ── Inertia starter-kit route ────────────────────────────────────────────────
@@ -49,8 +51,9 @@ PROXY_NETWORK_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
         },
         422: {
             "description": (
-                "Invalid parameters, e.g. `horizon=true` without `queue=redis`, or a "
-                "`proxy_network` that is not a valid Docker network name"
+                "Invalid parameters, e.g. `horizon=true` without `queue=redis`, a `locale` that is "
+                "not a language code such as `pt` or `pt_BR`, or a `proxy_network` that is not a "
+                "valid Docker network name"
             )
         },
         500: {"description": "Server-side project generation failed"},
@@ -107,6 +110,18 @@ async def new_inertia(
         ge=1024,
         le=65535,
         description="Host port mapped to the Laravel app container (port 8000 inside in dev, 80 in stage/prod).",
+    ),
+    locale: str = Query(
+        default="en",
+        pattern=LOCALE_PATTERN,
+        description=(
+            "Default locale of the app, e.g. `pt` or `pt_BR`: a lowercase language code of 2 or 3 "
+            "letters, optionally followed by `_` and an uppercase region. Sets `APP_LOCALE` and "
+            "`APP_FALLBACK_LOCALE` in the generated `.env`, and their defaults in the staging and "
+            "production Compose stacks (`${APP_LOCALE:-pt}`), so `config/app.php` needs no changes "
+            "and a deploy can still override either variable. Translation files (`lang/`) and "
+            "`APP_FAKER_LOCALE` are not touched."
+        ),
     ),
     proxy_network: Optional[str] = Query(
         default=None,
@@ -198,6 +213,7 @@ async def new_inertia(
     - ``.dockerignore`` – excludes ``.git``, ``node_modules``, ``vendor``, ``public/build``,
       ``.env*``, and log files from the build context
     - ``.env`` / ``.env.docker`` – pre-filled environment variables including a generated ``APP_KEY``
+      and the ``locale`` as ``APP_LOCALE`` / ``APP_FALLBACK_LOCALE``
 
     ``vendor/``, ``node_modules/``, and ``.git/`` are excluded from the archive —
     they are installed/created when the dev containers start.
@@ -215,6 +231,7 @@ async def new_inertia(
     template_context = {
         "php_version": php_version,
         "app_port": str(app_port),
+        "locale": locale,
         "proxy_network": proxy_network,
         "max_upload_mb": max_upload_mb,
         # Headroom for the other form fields and multipart framing around the file.
