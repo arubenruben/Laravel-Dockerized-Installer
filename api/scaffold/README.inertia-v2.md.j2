@@ -32,8 +32,8 @@ Telescope: `http://localhost:{{ app_port }}/telescope`{% endif %}
 | `docker-compose.prod.yml` | Production stack: nginx + php-fpm{% if queue != 'sync' %} + queue worker{% endif %}, no source mount or Vite sidecar |
 | `docker/nginx.conf` | nginx vhost (FastCGI → php-fpm), request body limit and FastCGI header buffers |
 | `docker/php/app.ini` | PHP upload limits (`upload_max_filesize`, `post_max_size`) and `memory_limit`; installed as `conf.d/zz-app.ini` |
-| `docker/dev.entrypoint.sh` | Dev-only entrypoint: composer install, wait-for-DB/migrate, wait-for-Vite, `php artisan serve` |
-| `docker/prod.entrypoint.sh` | Stage/prod entrypoint: wait-for-DB/migrate, then php-fpm + nginx. `worker <command>` mode skips both and runs the command as `www-data`{% if queue != 'sync' %} (used by the queue worker){% endif %} |
+| `docker/dev.entrypoint.sh` | Dev-only entrypoint: composer install, `public/storage` link, wait-for-DB/migrate, wait-for-Vite, `php artisan serve` |
+| `docker/prod.entrypoint.sh` | Stage/prod entrypoint: prepares `storage/` (directories, `www-data` ownership, `public/storage` link{% if db == 'sqlite' %}, SQLite file{% endif %}), wait-for-DB/migrate as `www-data`, then php-fpm + nginx. Given a command (`sh docker/prod.entrypoint.sh php artisan …`), it prepares storage and runs the command as `www-data` instead{% if queue != 'sync' %} (used by the queue worker){% endif %} |
 | `.dockerignore` | Excludes `.git`, `node_modules`, `vendor`, `public/build`, `.env*`, log files from the build context |
 | `.env` | Pre-filled environment with a generated `APP_KEY` |
 | `.env.docker` | Backup copy of the Docker environment file |
@@ -128,6 +128,27 @@ Outside the `local` environment (staging, production) the dashboard is only reac
 
 If a job can run longer than 60 s, raise `timeout` for its supervisor in `config/horizon.php` (keeping `retry_after` in `config/queue.php` above it) **and** raise `WORKER_STOP_GRACE_PERIOD` above it: otherwise `docker compose stop worker` kills the job once the grace period runs out.
 {% endif %}
+
+## Storage and persistent data
+
+Staging and production keep their state in named volumes, so `docker compose -f docker-compose.prod.yml down` followed by `up -d` (without `-v`, which deletes the volumes) loses nothing:
+
+| Volume | Mounted at | Holds |
+|---|---|---|
+| `storage_data_<env>` | `/var/www/html/storage/app` | Uploaded files (the `local` and `public` disks){% if queue != 'sync' %}. Shared by `app` and `worker`: files written by web requests are read by queued jobs{% endif %} |
+{% if db == 'sqlite' -%}
+| `sqlite_data_<env>` | `/var/www/html/database/data` | The SQLite database (`DB_DATABASE=/var/www/html/database/data/database.sqlite`){% if queue != 'sync' %}. Shared by `app` and `worker`; with one file per container the worker would see an empty database{% endif %} |
+{% elif db == 'mysql' -%}
+| `db_data_<env>` | `/var/lib/mysql` | The MySQL data |
+{% else -%}
+| `db_data_<env>` | `/var/lib/postgresql/data` | The PostgreSQL data |
+{% endif -%}
+{% if queue == 'redis' -%}
+| `redis_data_<env>` | `/data` | Redis persistence (queued jobs) |
+{% endif %}
+(`<env>` is `stage` or `prod`.)
+
+On every boot `docker/prod.entrypoint.sh` re-creates the `storage/` directories, gives `www-data` (the user php-fpm{% if queue != 'sync' %} and the worker{% endif %} run as) ownership of whatever is not already its own, and creates the `public/storage` link, so files on the `public` disk are served at `/storage/<name>`. Run commands that write to `storage/` as that user (`docker compose exec -u www-data app php artisan …`); anything left root-owned is fixed on the next boot.
 
 ## Stack
 

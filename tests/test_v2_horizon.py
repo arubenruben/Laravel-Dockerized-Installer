@@ -232,7 +232,7 @@ def test_prod_worker_runs_horizon_through_the_entrypoint_worker_mode(client, db)
     worker = _compose(_get_project(client, db=db), "docker-compose.prod.yml")["services"]["worker"]
 
     # The worker mode hands the command to su-exec, so Horizon runs as www-data.
-    assert worker["command"] == ["sh", "docker/prod.entrypoint.sh", "worker", "php", "artisan", "horizon"]
+    assert worker["command"] == ["sh", "docker/prod.entrypoint.sh", "php", "artisan", "horizon"]
 
 
 def test_stage_worker_runs_horizon_with_the_production_supervisors(client):
@@ -243,7 +243,6 @@ def test_stage_worker_runs_horizon_with_the_production_supervisors(client):
     assert compose["services"]["worker"]["command"] == [
         "sh",
         "docker/prod.entrypoint.sh",
-        "worker",
         "php",
         "artisan",
         "horizon",
