@@ -326,7 +326,11 @@ def build_docker_zip(upstream_zip_bytes: bytes, context: dict) -> io.BytesIO:
       - README.md
     """
     app_key = generate_app_key()
-    ctx = {**context, "app_key": app_key}
+    ctx = {
+        **context,
+        "app_key": app_key,
+        "app_slug": slugify_app_name(context["app_name"]),
+    }
 
     output_buffer = io.BytesIO()
 
