@@ -86,10 +86,6 @@ def _compose(archive: zipfile.ZipFile, name: str) -> dict:
     return yaml.safe_load(archive.read(ROOT + name))
 
 
-def _suffix(stack: str) -> str:
-    return "stage" if "stage" in stack else "prod"
-
-
 # ── Dockerfile ───────────────────────────────────────────────────────────────
 
 
@@ -107,7 +103,7 @@ def test_dockerfile_installs_su_exec_so_the_entrypoint_can_drop_to_www_data(clie
 @pytest.mark.parametrize("stack", STACKS)
 def test_app_and_worker_share_the_storage_volume(client, stack, db, queue):
     compose = _compose(_get_project(client, db=db, queue=queue), stack)
-    volume = f"storage_data_{_suffix(stack)}"
+    volume = "storage_data"
 
     assert volume in compose["volumes"]
     for service in ("app", "worker"):
@@ -120,14 +116,14 @@ def test_the_sync_queue_still_persists_storage_for_the_app(client, stack, db):
     compose = _compose(_get_project(client, db=db, queue="sync"), stack)
 
     assert "worker" not in compose["services"]
-    assert f"storage_data_{_suffix(stack)}:{STORAGE_MOUNT}" in compose["services"]["app"]["volumes"]
+    assert f"storage_data:{STORAGE_MOUNT}" in compose["services"]["app"]["volumes"]
 
 
 @pytest.mark.parametrize("queue", QUEUES)
 @pytest.mark.parametrize("stack", STACKS)
 def test_sqlite_lives_on_a_volume_shared_by_app_and_worker(client, stack, queue):
     compose = _compose(_get_project(client, db="sqlite", queue=queue), stack)
-    volume = f"sqlite_data_{_suffix(stack)}"
+    volume = "sqlite_data"
 
     assert compose["x-app-environment"]["DB_DATABASE"] == SQLITE_FILE
     assert volume in compose["volumes"]
@@ -150,20 +146,22 @@ def test_the_sqlite_mount_is_a_new_subdirectory_so_it_does_not_hide_the_migratio
 @pytest.mark.parametrize("stack", STACKS)
 def test_server_databases_keep_their_own_volume_and_no_sqlite_one(client, stack, db):
     compose = _compose(_get_project(client, db=db), stack)
-    suffix = _suffix(stack)
 
-    assert set(compose["volumes"]) == {f"storage_data_{suffix}", f"db_data_{suffix}"}
+    assert set(compose["volumes"]) == {"storage_data", "db_data"}
     assert "sqlite" not in yaml.safe_dump(compose)
     for service in ("app", "worker"):
         assert not any(SQLITE_MOUNT in v for v in compose["services"][service]["volumes"])
 
 
-def test_stage_and_prod_do_not_share_volume_names(client):
+def test_stage_and_prod_volumes_stay_apart_through_their_project_names(client):
     archive = _get_project(client, db="sqlite", queue="redis")
+    stage = _compose(archive, "docker-compose.stage.yml")
+    prod = _compose(archive, "docker-compose.prod.yml")
 
-    stage = set(_compose(archive, "docker-compose.stage.yml")["volumes"])
-    prod = set(_compose(archive, "docker-compose.prod.yml")["volumes"])
-    assert stage.isdisjoint(prod)
+    # Compose prefixes volume names with the project name, so the names themselves
+    # no longer carry the environment: only the project does.
+    assert set(stage["volumes"]) == set(prod["volumes"])
+    assert stage["name"] != prod["name"]
 
 
 def test_dev_stack_keeps_bind_mounted_storage_and_database(client):
@@ -324,6 +322,8 @@ def test_readme_documents_the_persistent_volumes(client, db):
     readme = _get_project(client, db=db).read(ROOT + "README.md").decode()
 
     assert "## Storage and persistent data" in readme
-    assert "| `storage_data_<env>` | `/var/www/html/storage/app` |" in readme
-    assert ("sqlite_data_<env>" in readme) == (db == "sqlite")
-    assert ("db_data_<env>" in readme) == (db != "sqlite")
+    assert "| `storage_data` | `/var/www/html/storage/app` |" in readme
+    assert ("`sqlite_data`" in readme) == (db == "sqlite")
+    assert ("`db_data`" in readme) == (db != "sqlite")
+    assert "demo-prod_storage_data" in readme  # Compose prefixes the project name
+    assert "_data_<env>" not in readme

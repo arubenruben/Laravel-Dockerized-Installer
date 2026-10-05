@@ -1,8 +1,23 @@
-# Laravel + Inertia.js ({{ starter_kit | replace('-', ' ') | title }}) — staging stack
+# Laravel + Inertia.js ({{ starter_kit | replace('-', ' ') | title }}) — {{ deploy_env }} stack
 # Runs the image built by `docker build .` (php-fpm + nginx, assets pre-built).
 # No source bind mount, no Vite sidecar. The image contains no .env (.dockerignore
 # excludes it), so every runtime setting comes from the x-app-environment block
 # below, which `app`{% if queue != 'sync' %} and `worker` share{% else %} uses{% endif %}.
+#
+# Deploying — either build the image on this host:
+#   docker compose -f docker-compose.{{ env_suffix }}.yml up -d --build
+# or use an image pushed by CI (APP_IMAGE is the repository, IMAGE_TAG the tag):
+#   export APP_IMAGE=<registry>/<image> IMAGE_TAG=<tag>
+#   docker compose -f docker-compose.{{ env_suffix }}.yml pull
+#   docker compose -f docker-compose.{{ env_suffix }}.yml up -d --no-build
+# Without them the image is `{{ app_slug }}:latest`. Keep both set (exported, or in the env
+# file) for every `docker compose` call that starts containers: with only `pull`
+# given them, `up` would look for `{{ app_slug }}:latest` instead of the pulled image.
+#
+# This stack is its own Compose project, `{{ app_slug }}-{{ env_suffix }}`. The other environment's file
+# declares a different project name, so the two stacks run side by side from the
+# same checkout without sharing containers or volumes. They do share the host port
+# unless you set APP_PORT (default {{ '8001' if env_suffix == 'stage' else '8000' }} here).
 #
 # Where the ${VAR} placeholders come from: the shell environment, or an env file —
 # the one given with `--env-file <path>`, otherwise a file named exactly `.env` next
@@ -16,17 +31,22 @@
 # you configure MAIL_*.
 #
 # Check what Compose resolves before deploying:
-#   docker compose -f docker-compose.stage.yml config
-#   docker compose --env-file <path> -f docker-compose.stage.yml config
+#   docker compose -f docker-compose.{{ env_suffix }}.yml config
+#   docker compose --env-file <path> -f docker-compose.{{ env_suffix }}.yml config
 {% if queue != 'sync' %}
 # `worker` reuses the app image and processes queued jobs{% if horizon %} through Laravel Horizon{% endif %}; on stop it gets
 # WORKER_STOP_GRACE_PERIOD (default 90s) to finish its job — keep it above the
 # {% if horizon %}longest job timeout (60s by default in config/horizon.php){% else %}60s default job timeout{% endif %}, or deploys will kill jobs mid-run.
 {% endif %}
+name: {{ app_slug }}-{{ env_suffix }}
+
 {% set app_name_default = '${APP_NAME:-' ~ (app_name | compose_default) ~ '}' %}
+x-app-image: &app-image
+  image: ${APP_IMAGE:-{{ app_slug }}}:${IMAGE_TAG:-latest}
+
 x-app-environment: &app-environment
   APP_NAME: {{ app_name_default | yaml_quote }}
-  APP_ENV: staging
+  APP_ENV: {{ deploy_env }}
   APP_DEBUG: "false"
   APP_KEY: ${APP_KEY:?APP_KEY must be set}
   # Base URL for links built outside a request (queued mail, CLI). An https:// URL
@@ -70,15 +90,15 @@ x-app-environment: &app-environment
 
 services:
   app:
-    build: .
 {% if queue != 'sync' %}
-    # Explicit tag so `worker` can reuse this image instead of building it again.
+    # The only service that builds; `worker` reuses the image this one built or pulled.
 {% endif %}
-    image: {{ app_slug }}-app:stage
-    container_name: {{ app_slug }}_app_stage
+    <<: *app-image
+    build: .
+    container_name: {{ app_slug }}_app_{{ env_suffix }}
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-8000}:80"
+      - "${APP_PORT:-{{ '8001' if env_suffix == 'stage' else '8000' }}}:80"
 {% if db != 'sqlite' or queue == 'redis' %}
     depends_on:
 {% if db != 'sqlite' %}
@@ -93,9 +113,9 @@ services:
     environment:
       <<: *app-environment
     volumes:
-      - storage_data_stage:/var/www/html/storage/app
+      - storage_data:/var/www/html/storage/app
 {% if db == 'sqlite' %}
-      - sqlite_data_stage:/var/www/html/database/data
+      - sqlite_data:/var/www/html/database/data
 {% endif %}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/up"]
@@ -106,10 +126,11 @@ services:
 
 {% if queue != 'sync' %}
   worker:
-    image: {{ app_slug }}-app:stage
-    # Built by `app` above; never try to pull it from a registry.
+    <<: *app-image
+    # Built or pulled by `app` above; never build it or pull it separately. Pulling
+    # it too would race `app`, and a second build of the same image can crash BuildKit.
     pull_policy: never
-    container_name: {{ app_slug }}_worker_stage
+    container_name: {{ app_slug }}_worker_{{ env_suffix }}
     restart: unless-stopped
     # Arguments to the entrypoint select its worker mode: it prepares storage like
     # `app` does, then runs the command as www-data, not root.
@@ -120,10 +141,12 @@ services:
       - artisan
 {% if horizon %}
       - horizon
+{% if deploy_env != 'production' %}
       # config/horizon.php only defines `production` and `local` supervisors, and
-      # this stack runs with APP_ENV=staging: without this Horizon would start
+      # this stack runs with APP_ENV={{ deploy_env }}: without this Horizon would start
       # successfully but run no workers at all.
       - --environment=production
+{% endif %}
 {% else %}
       - queue:work
       - --sleep=3
@@ -142,16 +165,16 @@ services:
     environment:
       <<: *app-environment
     volumes:
-      - storage_data_stage:/var/www/html/storage/app
+      - storage_data:/var/www/html/storage/app
 {% if db == 'sqlite' %}
-      - sqlite_data_stage:/var/www/html/database/data
+      - sqlite_data:/var/www/html/database/data
 {% endif %}
 {% endif %}
 
 {% if db == 'mysql' %}
   db:
     image: mysql:8.0
-    container_name: {{ app_slug }}_db_stage
+    container_name: {{ app_slug }}_db_{{ env_suffix }}
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: laravel
@@ -159,7 +182,7 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD must be set}
     volumes:
-      - db_data_stage:/var/lib/mysql
+      - db_data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u laravel -p\"$$MYSQL_PASSWORD\""]
       interval: 10s
@@ -169,14 +192,14 @@ services:
 {% elif db == 'postgres' %}
   db:
     image: postgres:16-alpine
-    container_name: {{ app_slug }}_db_stage
+    container_name: {{ app_slug }}_db_{{ env_suffix }}
     restart: unless-stopped
     environment:
       POSTGRES_DB: laravel
       POSTGRES_USER: laravel
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
     volumes:
-      - db_data_stage:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "laravel", "-d", "laravel"]
       interval: 10s
@@ -188,13 +211,13 @@ services:
 {% if queue == 'redis' %}
   redis:
     image: redis:7-alpine
-    container_name: {{ app_slug }}_redis_stage
+    container_name: {{ app_slug }}_redis_{{ env_suffix }}
     restart: unless-stopped
     command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\" --save 60 1 --appendonly yes"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
     volumes:
-      - redis_data_stage:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
@@ -202,22 +225,24 @@ services:
       retries: 5
 {% endif %}
 
+# Compose prefixes volume names with the project name (`{{ app_slug }}-{{ env_suffix }}_storage_data`, …),
+# so the two stacks never share one.
 volumes:
   # Uploads and other files under storage/app. Survives `down` / `up` (but not `down -v`).
 {% if queue != 'sync' %}
   # Shared by `app` and `worker`: files written by web requests are read by queued jobs.
 {% endif %}
-  storage_data_stage:
+  storage_data:
 {% if db == 'sqlite' %}
   # The SQLite file. A subdirectory of database/, so it doesn't hide database/migrations.
 {% if queue != 'sync' %}
   # Shared by `app` and `worker`: with one file per container, the worker would see an
   # empty database.
 {% endif %}
-  sqlite_data_stage:
+  sqlite_data:
 {% else %}
-  db_data_stage:
+  db_data:
 {% endif %}
 {% if queue == 'redis' %}
-  redis_data_stage:
+  redis_data:
 {% endif %}

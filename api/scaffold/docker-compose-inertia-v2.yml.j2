@@ -31,9 +31,9 @@ services:
   app:
     build: .
 {% if queue != 'sync' %}
-    # Explicit tag so `worker` can reuse this image instead of building it again.
+    # Explicit image name so `worker` can reuse this image instead of building it again.
 {% endif %}
-    image: {{ app_slug }}-app:dev
+    image: {{ app_slug }}-dev
     container_name: {{ app_slug }}_app
     restart: unless-stopped
     working_dir: /var/www/html
@@ -75,8 +75,9 @@ services:
   # without restarting the worker.
 {% endif %}
   worker:
-    image: {{ app_slug }}-app:dev
-    # Built by `app` above; never try to pull it from a registry.
+    image: {{ app_slug }}-dev
+    # Built by `app` above; never build it again or try to pull it from a registry
+    # (two services building the same image at once can crash BuildKit).
     pull_policy: never
     container_name: {{ app_slug }}_worker
     restart: unless-stopped
