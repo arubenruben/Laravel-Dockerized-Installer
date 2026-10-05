@@ -17,6 +17,8 @@ from services import installer_service
 CONTEXT = {
     "php_version": "8.4",
     "app_port": "8000",
+    "max_upload_mb": 10,
+    "post_max_mb": 12,
     "db": "sqlite",
     "app_name": "demo",
     "starter_kit": "react",

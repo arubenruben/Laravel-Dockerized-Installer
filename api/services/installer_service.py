@@ -45,6 +45,7 @@ INERTIA_SERVER_TEMPLATES_V2: list[tuple[str, str]] = [
     ("docker-compose-inertia-stage.yml.j2", "docker-compose.stage.yml"),
     ("docker-compose-inertia-prod.yml.j2", "docker-compose.prod.yml"),
     ("nginx.conf.j2", "docker/nginx.conf"),
+    ("php.ini.j2", "docker/php/app.ini"),
     ("dev.entrypoint.sh.j2", "docker/dev.entrypoint.sh"),
     ("prod.entrypoint.sh.j2", "docker/prod.entrypoint.sh"),
     ("dockerignore.j2", ".dockerignore"),
