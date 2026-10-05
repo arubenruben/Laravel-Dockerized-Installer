@@ -95,6 +95,37 @@ def slugify_app_name(app_name: str) -> str:
     return slug or "app"
 
 
+_LINE_BREAK_RE = re.compile(r"[\r\n\x85\u2028\u2029]")
+
+
+def compose_default(value: str) -> str:
+    """
+    Make ``value`` safe as the default of a Compose ``${VAR:-default}``.
+
+    ``$`` would start an interpolation, so it is doubled; ``}`` would end the
+    default early and Compose has no escape for it, so it is dropped; a line
+    break makes Compose reject the interpolation, so it becomes a space.
+    """
+    return _LINE_BREAK_RE.sub(" ", value).replace("$", "$$").replace("}", "")
+
+
+# Characters YAML does not allow raw in a double-quoted scalar and ``json.dumps``
+# leaves alone: DEL, the C1 controls (U+0085 is a YAML line break), the Unicode
+# line/paragraph separators and the BOM.
+_YAML_UNPRINTABLE_RE = re.compile(r"[\x7f-\x9f\u2028\u2029\ufeff]")
+
+
+def yaml_quote(value: str) -> str:
+    """Render ``value`` as a YAML double-quoted scalar (a JSON string is one)."""
+    return _YAML_UNPRINTABLE_RE.sub(
+        lambda match: f"\\u{ord(match.group()):04x}",
+        json.dumps(value, ensure_ascii=False),
+    )
+
+
+_jinja_env.filters.update(compose_default=compose_default, yaml_quote=yaml_quote)
+
+
 def _starter_kit_ref(starter_kit: str, auth_provider: str, teams: bool) -> str:
     """
     Return the ``composer create-project`` package reference (name[:branch])
