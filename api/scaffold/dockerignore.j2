@@ -2,6 +2,15 @@
 node_modules
 vendor
 public/build
+public/hot
+public/storage
 .env
 .env.*
+# The Dockerfile copies .env.example into a throwaway .env so Laravel can
+# boot during `npm run build`, so it must stay in the build context.
+!.env.example
 storage/logs/*.log
+database/*.sqlite*
+# Never bake a developer's local uploads into the image.
+storage/app/private
+storage/app/public
