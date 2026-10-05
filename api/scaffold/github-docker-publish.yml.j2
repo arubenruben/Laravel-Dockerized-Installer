@@ -1,0 +1,84 @@
+{# Rendered as-is: raw, because GitHub's ${{ ... }} and metadata-action's {{ ... }} are not Jinja. #}{% raw -%}
+# Builds the production Dockerfile and publishes the image to the GitHub Container
+# Registry, as ghcr.io/<owner>/<repo> (the name is lowercased).
+#
+# Pushes to main/master/develop and pushes of v*.*.* tags publish the image; pull
+# requests only build it, to check that it still builds. Tags:
+#   sha-<short sha>         every push
+#   <branch>                branch pushes (slashes become dashes)
+#   latest                  pushes to the repository's default branch
+#   stable, 1.2.3, 1.2, 1   pushes of a v*.*.* tag (v1.2.3)
+#
+# Deploy a pushed tag with the staging/production stacks (use docker-compose.stage.yml
+# for staging). Keep both variables set for every command that starts containers:
+#   APP_IMAGE=ghcr.io/<owner>/<repo> IMAGE_TAG=<tag> docker compose -f docker-compose.prod.yml pull
+#   APP_IMAGE=ghcr.io/<owner>/<repo> IMAGE_TAG=<tag> docker compose -f docker-compose.prod.yml up -d --no-build
+# The host needs `docker login ghcr.io` (a token with read:packages) if the package is private.
+name: Publish Docker image
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+
+jobs:
+  build-and-push:
+    name: Build and push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `latest=false` turns off metadata-action's automatic `latest` on version tags,
+      # so `latest` only ever follows the default branch.
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+{%- endraw %}

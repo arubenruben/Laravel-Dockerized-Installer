@@ -37,7 +37,9 @@ Telescope: `http://localhost:{{ app_port }}/telescope`{% endif %}
 | `.dockerignore` | Excludes `.git`, `node_modules`, `vendor`, `public/build`, `.env*`, log files from the build context |
 | `.env` | Pre-filled environment with a generated `APP_KEY` |
 | `.env.docker` | Backup copy of the Docker environment file |
-
+{% if ci_provider == 'github' %}| `.github/workflows/docker-publish.yml` | GitHub Actions workflow: builds the `Dockerfile` and pushes the image to `ghcr.io/<owner>/<repo>` (tags: [CI pipeline](#ci-pipeline)) |
+{% elif ci_provider == 'gitlab' %}| `.gitlab-ci.yml` | GitLab CI pipeline: builds the `Dockerfile` with Docker-in-Docker and pushes the image to the project's Container Registry (tags: [CI pipeline](#ci-pipeline)) |
+{% endif %}
 ## Project configuration
 
 | Option | Value |
@@ -53,6 +55,7 @@ Telescope: `http://localhost:{{ app_port }}/telescope`{% endif %}
 | Locale | `{{ locale }}` (`APP_LOCALE` and `APP_FALLBACK_LOCALE`; set either at deploy time to override it in staging and production) |
 | Max upload size | {{ max_upload_mb }} MB (request body limit {{ post_max_mb }} MB) |
 {% if proxy_network %}| Proxy network | `{{ proxy_network }}` (external; staging/production `app` joins it and publishes no host port) |
+{% endif %}{% if ci_provider != 'none' %}| CI pipeline | {{ 'GitHub Actions' if ci_provider == 'github' else 'GitLab CI' }} (builds and pushes the image; see [CI pipeline](#ci-pipeline)) |
 {% endif %}{% if install_boost %}| Laravel Boost | yes |
 {% endif %}{% if telescope %}| Laravel Telescope | yes (dev only) |
 {% endif %}
@@ -149,7 +152,47 @@ The image is `${APP_IMAGE:-{{ app_slug }}}:${IMAGE_TAG:-latest}`, i.e. `{{ app_s
 {%- if queue != 'sync' %} `app` is the only service that builds or pulls the image; `worker` reuses it (`pull_policy: never`), so only one build ever runs.{% endif %}
 
 {% if proxy_network %}Neither stack publishes a host port, so `APP_PORT` has no effect: `app` is reached through the reverse proxy on the `{{ proxy_network }}` network (see [Reverse proxy and TLS](#reverse-proxy-and-tls)).{% else %}Both stacks listen on the host port `APP_PORT`, which defaults to `8000` for production and `8001` for staging so they can start together; set `APP_PORT` to move either.{% endif %} Staging and production are separate environments, so give each its own secrets with `--env-file` rather than one shared `.env`.
+{% if ci_provider == 'github' %}
+## CI pipeline
 
+`.github/workflows/docker-publish.yml` builds the production `Dockerfile` and publishes the image to the GitHub Container Registry as `ghcr.io/<owner>/<repo>` (lowercase). A push publishes it; a pull request only builds it, to check that the image still builds.
+
+| Trigger | Tags pushed |
+|---|---|
+| Push to `main`, `master` or `develop` | `sha-<short sha>`, the branch name (slashes become `-`), and `latest` on the repository's default branch |
+| Push of a `v*.*.*` tag | `sha-<short sha>`, `stable`, and the version: `v1.2.3` is also tagged `1.2.3`, `1.2` and `1` |
+| Pull request into one of those branches | none (build only) |
+
+Deploy a pushed tag with the stack of your choice (`docker-compose.stage.yml` works the same way):
+
+```bash
+export APP_IMAGE=ghcr.io/<owner>/<repo> IMAGE_TAG=<tag>
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+```
+
+If the package is private, run `docker login ghcr.io` on the deploy host first, with a token that has `read:packages`.
+{% elif ci_provider == 'gitlab' %}
+## CI pipeline
+
+`.gitlab-ci.yml` builds the production `Dockerfile` with Docker-in-Docker (`docker:27-cli` and a `docker:27-dind` service, so the runner must allow privileged containers) and pushes the image to the project's Container Registry, `$CI_REGISTRY_IMAGE` (`<registry>/<group>/<project>`). Every branch and tag pipeline publishes it.
+
+| Pipeline | Tags pushed |
+|---|---|
+| Default branch | `<short sha>` and `latest` |
+| Any other branch | `<short sha>` and the branch slug (`CI_COMMIT_REF_SLUG`) |
+| Git tag | `<short sha>`, the tag name (`v1.2.3`) and `stable` |
+
+Deploy a pushed tag with the stack of your choice (`docker-compose.stage.yml` works the same way):
+
+```bash
+export APP_IMAGE=<registry>/<group>/<project> IMAGE_TAG=<tag>
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+```
+
+If the project is private, run `docker login <registry>` on the deploy host first, with a deploy token that has `read_registry`.
+{% endif %}
 ## Reverse proxy and TLS
 {% if proxy_network %}
 The stacks serve plain HTTP and do not terminate TLS: a TLS-terminating reverse proxy (Traefik, Caddy, nginx-proxy, …) sits in front of them. This project was generated with `proxy_network={{ proxy_network }}`, so in both stacks `app` publishes no host port and joins the external Docker network `{{ proxy_network }}` instead, under a per-environment alias. Every other service stays on the stack's own network, out of the proxy's reach.

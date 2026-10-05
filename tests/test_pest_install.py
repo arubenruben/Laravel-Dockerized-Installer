@@ -19,6 +19,7 @@ CONTEXT = {
     "app_port": "8000",
     "locale": "en",
     "proxy_network": None,
+    "ci_provider": "none",
     "max_upload_mb": 10,
     "post_max_mb": 12,
     "db": "sqlite",
