@@ -67,6 +67,14 @@ INERTIA_SERVER_TEMPLATES_V2: list[TemplateSpec] = [
     ("README.inertia-v2.md.j2", "README.md"),
 ]
 
+# The image build-and-push pipeline for each ``ci_provider`` other than ``none``:
+# (template file, destination path). The selected one is rendered alongside the
+# project's templates; ``none`` adds no file.
+CI_TEMPLATES: dict[str, tuple[str, str]] = {
+    "github": ("github-docker-publish.yml.j2", ".github/workflows/docker-publish.yml"),
+    "gitlab": ("gitlab-ci.yml.j2", ".gitlab-ci.yml"),
+}
+
 # Composer package for each Inertia starter kit.
 _STARTER_KIT_PACKAGES: dict[str, str] = {
     "react": "laravel/react-starter-kit",
@@ -578,7 +586,8 @@ def _build_inertia_project_zip_sync(
        sculpts the project according to the requested auth features (default: none).
        For Pest, the remaining PHPUnit tests are then converted with
        ``pest-plugin-drift`` (after chisel, which prunes tests by PHPUnit form).
-    6. Read the generated APP_KEY; render and write Docker scaffold files.
+    6. Read the generated APP_KEY; render and write Docker scaffold files, plus
+       the ``ci_provider`` pipeline (``CI_TEMPLATES``) when one is selected.
     7. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
        hostnames, Redis, etc.).
     8. Zip everything except ``vendor/``, ``node_modules/``, ``.git/``,
@@ -814,7 +823,9 @@ def _build_inertia_project_zip_sync(
 
         # ── 7. Write Docker scaffold files ────────────────────────────────────
         ctx = {**context, "app_key": app_key, "app_slug": app_name}
-        for template_path, dest_path, *extra in templates:
+        ci_template = CI_TEMPLATES.get(context.get("ci_provider", "none"))
+        to_render = [*templates, ci_template] if ci_template else templates
+        for template_path, dest_path, *extra in to_render:
             rendered = _jinja_env.get_template(template_path).render({**ctx, **(extra[0] if extra else {})})
             dest = project_dir / dest_path
             dest.parent.mkdir(parents=True, exist_ok=True)
