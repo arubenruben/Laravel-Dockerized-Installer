@@ -27,8 +27,8 @@ Vite dev server: `http://localhost:5173`
 | `app/`, `config/`, `routes/`, … | Full Laravel project source |
 | `Dockerfile` | PHP {{ php_version }}-cli image for the Laravel backend |
 | `docker-compose.yml` | App + Vite (Node 20) + {% if db != 'sqlite' %}{{ db }} + {% endif %}Redis |
-| `.env` | Pre-filled environment with a generated `APP_KEY` |
-| `.env.docker` | Backup copy of the Docker environment file |
+| `.env` | The starter kit's environment with the Docker settings applied and a generated `APP_KEY` |
+| `.env.docker` | Backup copy of the Docker environment file; listed in `.gitignore`, since it holds the `APP_KEY` |
 
 ## Project configuration
 

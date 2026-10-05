@@ -103,8 +103,8 @@ laravel-<app_name>-inertia-<kit>-docker.zip
     ├── Dockerfile                 ← PHP CLI image for the Laravel backend
     ├── docker-compose.yml         ← app + vite (Node.js, port 5173) + db
     ├── entrypoint.sh              ← container startup script
-    ├── .env                       ← pre-filled env with a generated APP_KEY
-    ├── .env.docker                ← backup copy of the Docker env file
+    ├── .env                       ← the kit's .env + Docker settings, generated APP_KEY
+    ├── .env.docker                ← backup copy (git-ignored, it holds the APP_KEY)
     └── README.md                  ← Docker quick-start instructions
 ```
 
@@ -155,5 +155,5 @@ api/
     ├── entrypoint.sh.j2           Container startup script for Inertia projects
     ├── README.docker.md.j2        README template for standard releases
     ├── README.inertia.md.j2       README template for Inertia projects
-    └── .env.docker.j2             Environment variables template
+    └── .env.docker.j2             Docker overrides for .env (merged into the kit's .env)
 ```

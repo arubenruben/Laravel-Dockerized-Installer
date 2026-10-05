@@ -146,7 +146,25 @@ def yaml_quote(value: str) -> str:
     )
 
 
-_jinja_env.filters.update(compose_default=compose_default, yaml_quote=yaml_quote)
+_DOTENV_SPECIAL_RE = re.compile(r'[\\"$]')
+
+
+def dotenv_quote(value: str) -> str:
+    """
+    Render ``value`` as a double-quoted ``.env`` value.
+
+    A value with a space is a parse error unquoted. Inside double quotes phpdotenv
+    (and Compose) read ``\\``, ``\\"`` and ``\\$`` as escapes and expand ``${VAR}``,
+    so those three are escaped. A line break becomes a space: ``_merge_env`` works
+    line by line, and an app name has no use for one.
+    """
+    value = _LINE_BREAK_RE.sub(" ", value)
+    return '"' + _DOTENV_SPECIAL_RE.sub(lambda match: "\\" + match.group(), value) + '"'
+
+
+_jinja_env.filters.update(
+    compose_default=compose_default, dotenv_quote=dotenv_quote, yaml_quote=yaml_quote
+)
 
 
 def _starter_kit_ref(starter_kit: str, auth_provider: str, teams: bool) -> str:
@@ -469,6 +487,60 @@ def _configure_telescope_dev_only(project_dir: Path) -> None:
     provider_php.write_text(patched)
 
 
+# A ``KEY=value`` line of a ``.env`` file, active or commented out (``# KEY=value``).
+_ENV_LINE_RE = re.compile(r"^\s*(?P<comment>#\s*)?(?:export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_.]*)=")
+
+
+def _split_lines(text: str) -> list[str]:
+    """Split on ``\\n`` / ``\\r\\n`` only: ``str.splitlines`` also cuts at form feeds and the like."""
+    lines = re.split(r"\r?\n", text)
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _merge_env(base: str, overrides: str) -> str:
+    """
+    Apply the ``KEY=value`` lines of ``overrides`` to the ``.env`` file ``base``.
+
+    A key replaces the first line of ``base`` that sets it, even a commented-out one
+    (``# DB_HOST=127.0.0.1``), and later lines for that key are dropped. A key ``base``
+    lacks is appended at the end. Every other line and comment is kept as is.
+    """
+    wanted: dict[str, str] = {}
+    for line in _split_lines(overrides):
+        match = _ENV_LINE_RE.match(line)
+        if match and not match["comment"]:
+            wanted[match["key"]] = line.strip()
+
+    merged: list[str] = []
+    placed: set[str] = set()
+    for line in _split_lines(base):
+        match = _ENV_LINE_RE.match(line)
+        key = match["key"] if match else None
+        if key not in wanted:
+            merged.append(line)
+        elif key not in placed:
+            merged.append(wanted[key])
+            placed.add(key)
+    merged.extend(line for key, line in wanted.items() if key not in placed)
+    return "".join(f"{line}\n" for line in merged)
+
+
+def _gitignore_env_docker(project_dir: Path) -> None:
+    """
+    Add ``.env.docker`` to the project's ``.gitignore``, unless it is listed already.
+
+    It holds the generated ``APP_KEY``, which the starter kits' ``.gitignore`` does not cover.
+    """
+    gitignore = project_dir / ".gitignore"
+    current = gitignore.read_text() if gitignore.exists() else ""
+    if any(line.strip() in (".env.docker", "/.env.docker") for line in current.splitlines()):
+        return
+    separator = "" if not current or current.endswith("\n") else "\n"
+    gitignore.write_text(f"{current}{separator}.env.docker\n")
+
+
 def _build_env() -> dict[str, str]:
     """Return an os.environ copy augmented with the Composer global bin dir."""
     env = os.environ.copy()
@@ -588,8 +660,9 @@ def _build_inertia_project_zip_sync(
        ``pest-plugin-drift`` (after chisel, which prunes tests by PHPUnit form).
     6. Read the generated APP_KEY; render and write Docker scaffold files, plus
        the ``ci_provider`` pipeline (``CI_TEMPLATES``) when one is selected.
-    7. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
-       hostnames, Redis, etc.).
+    7. Merge the Docker settings (DB → Docker service hostnames, Redis, etc.) into
+       the starter kit's ``.env``, write the result as ``.env`` and ``.env.docker``,
+       and git-ignore ``.env.docker`` (it holds the ``APP_KEY``).
     8. Zip everything except ``vendor/``, ``node_modules/``, ``.git/``,
        and ``public/build/`` (Vite handles assets at runtime).
     """
@@ -815,11 +888,11 @@ def _build_inertia_project_zip_sync(
         # ── 6. Read APP_KEY ───────────────────────────────────────────────────
         app_key = ""
         env_file = project_dir / ".env"
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.startswith("APP_KEY="):
-                    app_key = line.split("=", 1)[1].strip()
-                    break
+        kit_env = env_file.read_text() if env_file.exists() else ""
+        for line in kit_env.splitlines():
+            if line.startswith("APP_KEY="):
+                app_key = line.split("=", 1)[1].strip()
+                break
 
         # ── 7. Write Docker scaffold files ────────────────────────────────────
         ctx = {**context, "app_key": app_key, "app_slug": app_name}
@@ -833,9 +906,13 @@ def _build_inertia_project_zip_sync(
             if dest_path.endswith(".sh"):
                 dest.chmod(0o755)
 
-        env_docker = _jinja_env.get_template(".env.docker.j2").render(ctx)
+        # The template only lists what Docker changes; everything else the starter
+        # kit's ``.env`` sets (SESSION_*, CACHE_STORE, MAIL_*, ...) is kept.
+        overrides = _jinja_env.get_template(".env.docker.j2").render(ctx)
+        env_docker = _merge_env(kit_env, overrides)
         (project_dir / ".env.docker").write_text(env_docker)
         (project_dir / ".env").write_text(env_docker)  # ready for docker compose
+        _gitignore_env_docker(project_dir)
 
         # ── 8. Zip the project ────────────────────────────────────────────────
         _EXCLUDE_TOPS = {"vendor", "node_modules", ".git"}
