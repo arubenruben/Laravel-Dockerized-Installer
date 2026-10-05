@@ -27,6 +27,7 @@ CONTEXT = {
     "teams": False,
     "testing_framework": "pest",
     "install_boost": False,
+    "telescope": False,
     "auth_features": ["registration"],
 }
 

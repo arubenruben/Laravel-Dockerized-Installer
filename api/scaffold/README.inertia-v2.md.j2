@@ -14,7 +14,8 @@ docker compose up --build
 ```
 
 App: `http://localhost:{{ app_port }}`  
-Vite dev server: `http://localhost:5173`
+Vite dev server: `http://localhost:5173`{% if telescope %}  
+Telescope: `http://localhost:{{ app_port }}/telescope`{% endif %}
 
 > **This archive is fully ready to use.** The project was created with `laravel new`
 > on the server — an `APP_KEY` is already set in `.env` and all Docker files are
@@ -50,6 +51,7 @@ Vite dev server: `http://localhost:5173`
 | PHP version | {{ php_version }} |
 | Max upload size | {{ max_upload_mb }} MB (request body limit {{ post_max_mb }} MB) |
 {% if install_boost %}| Laravel Boost | yes |
+{% endif %}{% if telescope %}| Laravel Telescope | yes (dev only) |
 {% endif %}
 
 ## Useful commands
@@ -97,6 +99,12 @@ Redis is reached through the pure-PHP `predis/predis` client (installed for you,
 {%- else %}
 Jobs are stored in the `jobs` table, created by the starter kit's migration. To use Redis instead, regenerate the project with `queue=redis`.
 {%- endif %}
+{%- endif %}
+{%- if telescope %}
+
+## Telescope
+
+[Laravel Telescope](https://laravel.com/docs/telescope) is available in the dev stack at `http://localhost:{{ app_port }}/telescope`. It is a `require-dev` package, so the staging/production image (`composer install --no-dev`) does not contain it. `App\Providers\TelescopeServiceProvider` is therefore not listed in `bootstrap/providers.php`; `AppServiceProvider::register()` registers it only when Telescope's base class exists, so staging and production boot without it.
 {%- endif %}
 
 ## Stack

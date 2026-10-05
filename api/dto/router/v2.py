@@ -125,6 +125,15 @@ async def new_inertia(
             "in the web request."
         ),
     ),
+    telescope: bool = Query(
+        default=False,
+        description=(
+            "Install `laravel/telescope` for local debugging (requests, queries, jobs, exceptions), "
+            "served at `/telescope` in the dev stack. It is a `require-dev` package, so the "
+            "staging/production image (`composer install --no-dev`) does not contain it; the app "
+            "registers its provider only when the package is present, so those stacks boot normally."
+        ),
+    ),
     app_name: str = Query(
         default="my-app",
         description=(
@@ -181,6 +190,7 @@ async def new_inertia(
         "teams": teams,
         "testing_framework": testing_framework,
         "install_boost": install_boost,
+        "telescope": telescope,
         "auth_features": auth_features,
     }
 
