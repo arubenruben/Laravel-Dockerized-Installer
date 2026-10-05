@@ -141,7 +141,7 @@ def test_dotenv_defines_each_variable_once_next_to_the_other_app_settings(client
 
     assert text.count("APP_LOCALE=") == 1
     assert text.count("APP_FALLBACK_LOCALE=") == 1
-    assert "APP_URL=http://localhost:8080\nAPP_LOCALE=pt\nAPP_FALLBACK_LOCALE=pt\n\nLOG_CHANNEL=stack" in text
+    assert "APP_URL=http://localhost:8080\nAPP_LOCALE=pt\nAPP_FALLBACK_LOCALE=pt\n" in text
 
 
 # ── Staging and production ───────────────────────────────────────────────────

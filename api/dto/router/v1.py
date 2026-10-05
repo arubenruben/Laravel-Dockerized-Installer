@@ -98,6 +98,9 @@ async def download(
         "app_port": str(app_port),
         "db": db,
         "app_name": app_name,
+        # Any release can be picked, including ones that predate CACHE_STORE and
+        # BROADCAST_CONNECTION: keep writing the old key names for them too.
+        "legacy_env_keys": True,
     }
     output_buffer = build_docker_zip(upstream_zip_bytes, template_context)
 
