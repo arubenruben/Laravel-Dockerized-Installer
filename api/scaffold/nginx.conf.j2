@@ -7,6 +7,10 @@ server {
 
     charset utf-8;
 
+    # nginx's default (1M) answers 413 before PHP is invoked. Must match
+    # post_max_size in docker/php/app.ini.
+    client_max_body_size {{ post_max_mb }}M;
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }
@@ -19,6 +23,12 @@ server {
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
+
+        # The default FastCGI buffers (4k/8k) overflow when Laravel/Fortify
+        # stack several Set-Cookie headers (session, XSRF-TOKEN, remember-me),
+        # and nginx answers 502 "upstream sent too big header".
+        fastcgi_buffer_size 16k;
+        fastcgi_buffers 4 16k;
     }
 
     location ~ /\.(?!well-known).* {
