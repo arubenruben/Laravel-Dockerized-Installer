@@ -17,6 +17,7 @@ from services import installer_service
 CONTEXT = {
     "php_version": "8.4",
     "app_port": "8000",
+    "locale": "en",
     "proxy_network": None,
     "max_upload_mb": 10,
     "post_max_mb": 12,
