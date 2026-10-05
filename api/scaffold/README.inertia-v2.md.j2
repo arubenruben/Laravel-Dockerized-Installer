@@ -26,13 +26,13 @@ Vite dev server: `http://localhost:5173`
 |---|---|
 | `app/`, `config/`, `routes/`, … | Full Laravel project source |
 | `Dockerfile` | PHP {{ php_version }}-fpm image; builds assets and installs dependencies at build time, serves via nginx + php-fpm |
-| `docker-compose.yml` | Dev stack: app (`php artisan serve`) + Vite (Node 20){% if db != 'sqlite' %} + {{ db }}{% endif %} |
-| `docker-compose.stage.yml` | Staging stack: nginx + php-fpm, no source mount or Vite sidecar |
-| `docker-compose.prod.yml` | Production stack: nginx + php-fpm, no source mount or Vite sidecar |
+| `docker-compose.yml` | Dev stack: app (`php artisan serve`) + Vite (Node 20){% if queue != 'sync' %} + queue worker (`queue:listen`){% endif %}{% if db != 'sqlite' %} + {{ db }}{% endif %}{% if queue == 'redis' %} + redis{% endif %} |
+| `docker-compose.stage.yml` | Staging stack: nginx + php-fpm{% if queue != 'sync' %} + queue worker{% endif %}, no source mount or Vite sidecar |
+| `docker-compose.prod.yml` | Production stack: nginx + php-fpm{% if queue != 'sync' %} + queue worker{% endif %}, no source mount or Vite sidecar |
 | `docker/nginx.conf` | nginx vhost (FastCGI → php-fpm), request body limit and FastCGI header buffers |
 | `docker/php/app.ini` | PHP upload limits (`upload_max_filesize`, `post_max_size`) and `memory_limit`; installed as `conf.d/zz-app.ini` |
 | `docker/dev.entrypoint.sh` | Dev-only entrypoint: composer install, wait-for-DB/migrate, wait-for-Vite, `php artisan serve` |
-| `docker/prod.entrypoint.sh` | Stage/prod entrypoint: wait-for-DB/migrate, then php-fpm + nginx |
+| `docker/prod.entrypoint.sh` | Stage/prod entrypoint: wait-for-DB/migrate, then php-fpm + nginx. `worker <command>` mode skips both and runs the command as `www-data`{% if queue != 'sync' %} (used by the queue worker){% endif %} |
 | `.dockerignore` | Excludes `.git`, `node_modules`, `vendor`, `public/build`, `.env*`, log files from the build context |
 | `.env` | Pre-filled environment with a generated `APP_KEY` |
 | `.env.docker` | Backup copy of the Docker environment file |
@@ -46,6 +46,7 @@ Vite dev server: `http://localhost:5173`
 | Teams | {{ 'yes' if teams else 'no' }} |
 | Testing | {{ testing_framework | upper }} |
 | Database | {{ db }} |
+| Queue | {{ queue }} |
 | PHP version | {{ php_version }} |
 | Max upload size | {{ max_upload_mb }} MB (request body limit {{ post_max_mb }} MB) |
 {% if install_boost %}| Laravel Boost | yes |
@@ -65,15 +66,48 @@ docker compose exec app bash
 
 # Run migrations
 docker compose exec app php artisan migrate
-```
+{% if queue != 'sync' %}
+
+# Tail the queue worker
+docker compose logs -f worker
+{% endif %}```
+
+## Queue
+{% if queue == 'sync' %}
+
+Queued jobs are **not** processed in the background: `QUEUE_CONNECTION=sync` runs each job inline, during the web request that dispatched it. There is no `worker` service in any stack. To get background processing, regenerate the project with `queue=database` or `queue=redis`.
+{%- else %}
+
+Queued jobs (`QUEUE_CONNECTION={{ queue }}`) are processed by the `worker` service in every stack, which reuses the app image. The dev stack uses a real queue too (not `sync`), so jobs behave locally as they do once deployed.
+
+| Stack | Worker command | Notes |
+|---|---|---|
+| Dev | `php artisan queue:listen --tries=1 --timeout=0` | Reloads your code on every job |
+| Staging / production | `php artisan queue:work --sleep=3 --tries=3 --max-time=3600` | Runs as `www-data`; starts once `app` is healthy, i.e. migrations have run |
+
+Staging/production worker settings (shell-exported env vars, like the other secrets):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WORKER_STOP_GRACE_PERIOD` | `90s` | How long `docker compose stop worker` (and a deploy) waits for the running job to finish. Keep it above the job timeout (`queue:work` defaults to 60 s) |
+{% if queue == 'redis' -%}
+| `REDIS_PASSWORD` | _(required)_ | Password of the staging/production Redis; `docker compose` refuses to start without it |
+
+Redis is reached through the pure-PHP `predis/predis` client (installed for you, so the image needs no `phpredis` extension). In staging/production it is password-protected and persists its data in the `redis_data_*` volume; the dev Redis has no password.
+{%- else %}
+Jobs are stored in the `jobs` table, created by the starter kit's migration. To use Redis instead, regenerate the project with `queue=redis`.
+{%- endif %}
+{%- endif %}
 
 ## Stack
 
 | Service | Image | Host port |
 |---|---|---|
 | app | php:{{ php_version }}-fpm-alpine + nginx | {{ app_port }} |
-| vite | node:20-alpine | 5173 |
+{% if queue != 'sync' %}| worker | same image as app | — |
+{% endif %}| vite | node:20-alpine | 5173 |
 {% if db == 'mysql' %}| db | mysql:8.0 | 3306 |
 {% elif db == 'postgres' %}| db | postgres:16-alpine | 5432 |
-{% endif %}| redis | redis:7-alpine | 6379 |
+{% endif %}{% if queue == 'redis' %}| redis | redis:7-alpine | — |
+{% endif %}
 

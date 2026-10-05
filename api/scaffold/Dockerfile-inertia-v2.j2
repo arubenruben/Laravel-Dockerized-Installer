@@ -2,16 +2,16 @@ FROM php:{{ php_version }}-fpm-alpine
 
 RUN apk add --no-cache \
     bash curl zip unzip git nginx nodejs npm libpng-dev libjpeg-turbo-dev freetype-dev \
-    oniguruma-dev libxml2-dev && \
+    oniguruma-dev libxml2-dev su-exec && \
     docker-php-ext-configure gd --with-freetype --with-jpeg && \
 {% if db == 'mysql' %}
-    docker-php-ext-install pdo pdo_mysql mbstring gd xml bcmath opcache
+    docker-php-ext-install pdo pdo_mysql mbstring gd xml bcmath opcache pcntl
 {% elif db == 'postgres' %}
     apk add --no-cache postgresql-dev && \
-    docker-php-ext-install pdo pdo_pgsql mbstring gd xml bcmath opcache
+    docker-php-ext-install pdo pdo_pgsql mbstring gd xml bcmath opcache pcntl
 {% else %}
     apk add --no-cache sqlite-dev && \
-    docker-php-ext-install pdo pdo_sqlite mbstring gd xml bcmath opcache
+    docker-php-ext-install pdo pdo_sqlite mbstring gd xml bcmath opcache pcntl
 {% endif %}
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer

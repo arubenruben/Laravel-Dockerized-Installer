@@ -1,45 +1,103 @@
 # Laravel + Inertia.js ({{ starter_kit | replace('-', ' ') | title }}) — staging stack
 # Runs the image built by `docker build .` (php-fpm + nginx, assets pre-built).
 # No source bind mount, no Vite sidecar — set secrets via shell-exported env vars.
+{% if queue == 'redis' %}
+# `docker compose` refuses to start without REDIS_PASSWORD (the Redis password).
+{% endif %}
+{% if queue != 'sync' %}
+# `worker` reuses the app image and processes queued jobs; on stop it gets
+# WORKER_STOP_GRACE_PERIOD (default 90s) to finish its job — keep it above the
+# 60s default job timeout, or deploys will kill jobs mid-run.
+{% endif %}
+x-app-environment: &app-environment
+  APP_ENV: staging
+  APP_DEBUG: "false"
+  APP_KEY: ${APP_KEY}
+{% if db == 'mysql' %}
+  DB_CONNECTION: mysql
+  DB_HOST: db
+  DB_PORT: 3306
+  DB_DATABASE: laravel
+  DB_USERNAME: laravel
+  DB_PASSWORD: ${DB_PASSWORD}
+{% elif db == 'postgres' %}
+  DB_CONNECTION: pgsql
+  DB_HOST: db
+  DB_PORT: 5432
+  DB_DATABASE: laravel
+  DB_USERNAME: laravel
+  DB_PASSWORD: ${DB_PASSWORD}
+{% else %}
+  DB_CONNECTION: sqlite
+  DB_DATABASE: /var/www/html/database/database.sqlite
+{% endif %}
+  QUEUE_CONNECTION: {{ queue }}
+{% if queue == 'redis' %}
+  REDIS_CLIENT: predis
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+{% endif %}
+
 services:
   app:
     build: .
+{% if queue != 'sync' %}
+    # Explicit tag so `worker` can reuse this image instead of building it again.
+{% endif %}
+    image: {{ app_slug }}-app:stage
     container_name: {{ app_slug }}_app_stage
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8000}:80"
+{% if db != 'sqlite' or queue == 'redis' %}
     depends_on:
 {% if db != 'sqlite' %}
-      - db
+      db:
+        condition: service_started
 {% endif %}
-    environment:
-      APP_ENV: staging
-      APP_DEBUG: "false"
-      APP_KEY: ${APP_KEY}
-{% if db == 'mysql' %}
-      DB_CONNECTION: mysql
-      DB_HOST: db
-      DB_PORT: 3306
-      DB_DATABASE: laravel
-      DB_USERNAME: laravel
-      DB_PASSWORD: ${DB_PASSWORD}
-{% elif db == 'postgres' %}
-      DB_CONNECTION: pgsql
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_DATABASE: laravel
-      DB_USERNAME: laravel
-      DB_PASSWORD: ${DB_PASSWORD}
-{% else %}
-      DB_CONNECTION: sqlite
-      DB_DATABASE: /var/www/html/database/database.sqlite
+{% if queue == 'redis' %}
+      redis:
+        condition: service_healthy
 {% endif %}
+{% endif %}
+    environment: *app-environment
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/up"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+{% if queue != 'sync' %}
+  worker:
+    image: {{ app_slug }}-app:stage
+    # Built by `app` above; never try to pull it from a registry.
+    pull_policy: never
+    container_name: {{ app_slug }}_worker_stage
+    restart: unless-stopped
+    # The entrypoint's worker mode runs the command as www-data, not root.
+    command:
+      - sh
+      - docker/prod.entrypoint.sh
+      - worker
+      - php
+      - artisan
+      - queue:work
+      - --sleep=3
+      - --tries=3
+      - --max-time=3600
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-90s}
+    depends_on:
+      # A healthy app means migrations have run.
+      app:
+        condition: service_healthy
+{% if queue == 'redis' %}
+      redis:
+        condition: service_healthy
+{% endif %}
+    environment: *app-environment
+{% endif %}
 
 {% if db == 'mysql' %}
   db:
@@ -78,7 +136,29 @@ services:
       start_period: 30s
 {% endif %}
 
-{% if db != 'sqlite' %}
+{% if queue == 'redis' %}
+  redis:
+    image: redis:7-alpine
+    container_name: {{ app_slug }}_redis_stage
+    restart: unless-stopped
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\" --save 60 1 --appendonly yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    volumes:
+      - redis_data_stage:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{% endif %}
+
+{% if db != 'sqlite' or queue == 'redis' %}
 volumes:
+{% if db != 'sqlite' %}
   db_data_stage:
+{% endif %}
+{% if queue == 'redis' %}
+  redis_data_stage:
+{% endif %}
 {% endif %}
