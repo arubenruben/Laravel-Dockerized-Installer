@@ -137,6 +137,19 @@ async def new_inertia(
             "omitted, `app` publishes `${APP_PORT}:80` as before. The dev stack is not affected."
         ),
     ),
+    ci_provider: Literal["none", "github", "gitlab"] = Query(
+        default="none",
+        description=(
+            "Add a CI pipeline that builds the production `Dockerfile` and pushes the image to the "
+            "provider's container registry, so the staging/production stacks can deploy it "
+            "(`APP_IMAGE` / `IMAGE_TAG`, then `pull` and `up -d --no-build`). `github` adds "
+            "`.github/workflows/docker-publish.yml` (GitHub Actions, `ghcr.io/<owner>/<repo>`); "
+            "`gitlab` adds `.gitlab-ci.yml` (Docker-in-Docker, the project's GitLab Container "
+            "Registry). Both tag the image with the short commit SHA, `latest` on the default "
+            "branch, and `stable` on version tags; the generated README lists the full scheme. "
+            "`none` (the default) adds no file."
+        ),
+    ),
     max_upload_mb: int = Query(
         default=10,
         ge=1,
@@ -214,6 +227,9 @@ async def new_inertia(
       ``.env*``, and log files from the build context
     - ``.env`` / ``.env.docker`` – pre-filled environment variables including a generated ``APP_KEY``
       and the ``locale`` as ``APP_LOCALE`` / ``APP_FALLBACK_LOCALE``
+    - ``.github/workflows/docker-publish.yml`` (``ci_provider=github``) or ``.gitlab-ci.yml``
+      (``ci_provider=gitlab``) – builds the ``Dockerfile`` and pushes the image to ``ghcr.io`` /
+      the GitLab Container Registry; ``none`` adds neither
 
     ``vendor/``, ``node_modules/``, and ``.git/`` are excluded from the archive —
     they are installed/created when the dev containers start.
@@ -233,6 +249,7 @@ async def new_inertia(
         "app_port": str(app_port),
         "locale": locale,
         "proxy_network": proxy_network,
+        "ci_provider": ci_provider,
         "max_upload_mb": max_upload_mb,
         # Headroom for the other form fields and multipart framing around the file.
         "post_max_mb": max_upload_mb + 2,
