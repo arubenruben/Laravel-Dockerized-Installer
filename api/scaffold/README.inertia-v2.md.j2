@@ -167,6 +167,61 @@ Staging and production keep their state in named volumes, so `docker compose -f 
 {% endif %}
 On every boot `docker/prod.entrypoint.sh` re-creates the `storage/` directories, gives `www-data` (the user php-fpm{% if queue != 'sync' %} and the worker{% endif %} run as) ownership of whatever is not already its own, and creates the `public/storage` link, so files on the `public` disk are served at `/storage/<name>`. Run commands that write to `storage/` as that user (`docker compose exec -u www-data app php artisan …`); anything left root-owned is fixed on the next boot.
 
+## Resource limits
+
+Every service in the staging and production stacks has CPU and memory **limits** and **reservations** (`deploy.resources`), so a runaway process or a memory leak cannot starve the database and everything else on the host. Each value can be overridden from the shell or the env file, like the other settings:
+
+| Service | Prefix | CPU limit | Memory limit | CPU reservation | Memory reservation |
+|---|---|---|---|---|---|
+| `app` | `APP_` | `1.0` | `512M` | `0.25` | `256M` |
+{% if queue != 'sync' -%}
+| `worker` | `WORKER_` | `1.0` | `512M` | `0.25` | `256M` |
+{% endif -%}
+{% if db == 'mysql' -%}
+| `db` (MySQL) | `DB_` | `1.0` | `1G` | `0.25` | `512M` |
+{% elif db == 'postgres' -%}
+| `db` (PostgreSQL) | `DB_` | `1.0` | `512M` | `0.25` | `256M` |
+{% endif -%}
+{% if queue == 'redis' -%}
+| `redis` | `REDIS_` | `0.5` | `256M` | `0.1` | `128M` |
+{% endif %}
+The variables are `<PREFIX>CPU_LIMIT`, `<PREFIX>MEM_LIMIT`, `<PREFIX>CPU_RESERVATION` and `<PREFIX>MEM_RESERVATION`, and each one changes only its own service:
+
+```bash
+# give `app` 1 GB of memory; every other service keeps its defaults
+APP_MEM_LIMIT=1G docker compose -f docker-compose.prod.yml up -d
+```
+{% if db == 'mysql' %}
+MySQL 8 gets higher defaults than the other services because it can exceed 512M while starting.
+{% endif %}
+- A limit is a hard cap: a container over its memory limit is killed (and restarted, `restart: unless-stopped`), one over its CPU limit is throttled. If a service keeps restarting under load, check `docker inspect <container>` for `"OOMKilled": true` and raise its memory limit. `docker stats --no-stream` shows the limit next to the current usage.
+- The memory reservation is a soft guarantee: Docker only enforces it when the host runs short of memory. The CPU reservation is accepted by Compose, but Docker Engine does not apply it outside Swarm. `docker inspect` shows the CPU and memory limits and the memory reservation (`HostConfig` → `NanoCpus`, `Memory`, `MemoryReservation`).
+- Docker refuses to create a container whose memory reservation is above its limit (`Minimum memory limit can not be less than memory reservation limit`), so when you lower a limit below the default reservation, lower the reservation too: `APP_MEM_LIMIT=128M APP_MEM_RESERVATION=64M`.
+
+### Hosts that cannot apply limits
+
+Some hosts cannot apply cgroup limits, for example some Docker-in-Docker setups, where the containers fail to start with `cannot enter cgroupv2 ... in threaded mode`. There the limits can be dropped with an override file, here `docker-compose.no-limits.yml` (`!reset` needs Docker Compose 2.24 or later):
+
+```yaml
+services:
+  app: {deploy: !reset {}}
+{%- if queue != 'sync' %}
+  worker: {deploy: !reset {}}
+{%- endif %}
+{%- if db != 'sqlite' %}
+  db: {deploy: !reset {}}
+{%- endif %}
+{%- if queue == 'redis' %}
+  redis: {deploy: !reset {}}
+{%- endif %}
+```
+
+Pass it after the stack file in every command that starts containers:
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.no-limits.yml up -d
+```
+
 ## Stack
 
 | Service | Image | Host port |

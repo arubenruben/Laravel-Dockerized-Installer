@@ -37,7 +37,17 @@
 # `worker` reuses the app image and processes queued jobs{% if horizon %} through Laravel Horizon{% endif %}; on stop it gets
 # WORKER_STOP_GRACE_PERIOD (default 90s) to finish its job — keep it above the
 # {% if horizon %}longest job timeout (60s by default in config/horizon.php){% else %}60s default job timeout{% endif %}, or deploys will kill jobs mid-run.
-{% endif %}
+{% endif -%}
+#
+{% set limit_prefixes = ['APP_'] + (['WORKER_'] if queue != 'sync' else []) + (['DB_'] if db != 'sqlite' else []) + (['REDIS_'] if queue == 'redis' else []) -%}
+# Every service has CPU and memory limits and reservations (`deploy.resources`), so a
+# runaway process or a memory leak can't starve the database and everything else on the
+# host. Each value is overridable per service with <PREFIX>CPU_LIMIT, <PREFIX>MEM_LIMIT,
+# <PREFIX>CPU_RESERVATION and <PREFIX>MEM_RESERVATION, where <PREFIX> is the service's
+# prefix ({{ limit_prefixes | join(', ') }}); the defaults are on each service. Docker refuses a
+# reservation above its limit, so lower the two together. Hosts that cannot apply cgroup
+# limits (some Docker-in-Docker setups fail with "cannot enter cgroupv2 ... in threaded
+# mode") can drop them with an override file; the README shows one.
 name: {{ app_slug }}-{{ env_suffix }}
 
 {% set app_name_default = '${APP_NAME:-' ~ (app_name | compose_default) ~ '}' %}
@@ -123,6 +133,14 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "${APP_CPU_LIMIT:-1.0}"
+          memory: ${APP_MEM_LIMIT:-512M}
+        reservations:
+          cpus: "${APP_CPU_RESERVATION:-0.25}"
+          memory: ${APP_MEM_RESERVATION:-256M}
 
 {% if queue != 'sync' %}
   worker:
@@ -169,6 +187,14 @@ services:
 {% if db == 'sqlite' %}
       - sqlite_data:/var/www/html/database/data
 {% endif %}
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPU_LIMIT:-1.0}"
+          memory: ${WORKER_MEM_LIMIT:-512M}
+        reservations:
+          cpus: "${WORKER_CPU_RESERVATION:-0.25}"
+          memory: ${WORKER_MEM_RESERVATION:-256M}
 {% endif %}
 
 {% if db == 'mysql' %}
@@ -189,6 +215,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    # MySQL 8 can exceed 512M while starting, so its defaults are higher than Postgres's.
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPU_LIMIT:-1.0}"
+          memory: ${DB_MEM_LIMIT:-1G}
+        reservations:
+          cpus: "${DB_CPU_RESERVATION:-0.25}"
+          memory: ${DB_MEM_RESERVATION:-512M}
 {% elif db == 'postgres' %}
   db:
     image: postgres:16-alpine
@@ -206,6 +241,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${DB_CPU_LIMIT:-1.0}"
+          memory: ${DB_MEM_LIMIT:-512M}
+        reservations:
+          cpus: "${DB_CPU_RESERVATION:-0.25}"
+          memory: ${DB_MEM_RESERVATION:-256M}
 {% endif %}
 
 {% if queue == 'redis' %}
@@ -223,6 +266,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "${REDIS_CPU_LIMIT:-0.5}"
+          memory: ${REDIS_MEM_LIMIT:-256M}
+        reservations:
+          cpus: "${REDIS_CPU_RESERVATION:-0.1}"
+          memory: ${REDIS_MEM_RESERVATION:-128M}
 {% endif %}
 
 # Compose prefixes volume names with the project name (`{{ app_slug }}-{{ env_suffix }}_storage_data`, …),
