@@ -1,5 +1,7 @@
 FROM php:{{ php_version }}-fpm-alpine
 
+# pcntl lets queue workers handle signals (graceful stop, job timeouts){% if horizon %} and is
+# required by Laravel Horizon (together with posix, which the base image already has){% endif %}.
 RUN apk add --no-cache \
     bash curl zip unzip git nginx nodejs npm libpng-dev libjpeg-turbo-dev freetype-dev \
     oniguruma-dev libxml2-dev su-exec && \

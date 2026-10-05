@@ -524,6 +524,8 @@ def _build_inertia_project_zip_sync(
        If ``telescope`` is set, ``composer require laravel/telescope --dev``
        (same rule), ``package:discover``, ``telescope:install``, then
        ``_configure_telescope_dev_only`` so the ``--no-dev`` image still boots.
+       If ``horizon`` is set, ``composer require laravel/horizon`` (same rule),
+       ``package:discover`` and ``horizon:install``.
     4. ``npm install`` — required before ``install:features`` because chisel's
        ``apply`` callback runs ``npm run lint`` / ``npm run format``.
     5. ``php artisan install:features --no-interaction --answers=<json>`` —
@@ -672,6 +674,36 @@ def _build_inertia_project_zip_sync(
                 timeout=60,
             )
             _configure_telescope_dev_only(project_dir)
+
+        # ── 3d. Laravel Horizon ───────────────────────────────────────────────
+        # Same ``--no-scripts`` rule as step 3. The image has ``pcntl`` and
+        # ``posix``, which Horizon requires, but this host may not; Composer
+        # would refuse the install here, so those platform checks are skipped.
+        # ``horizon:install`` publishes ``config/horizon.php`` and
+        # ``HorizonServiceProvider`` and registers the provider in
+        # ``bootstrap/providers.php``; it needs the package discovered first.
+        if context.get("horizon"):
+            _run(
+                [
+                    "composer", "require", "laravel/horizon", "--no-interaction", "--no-scripts",
+                    "--ignore-platform-req=ext-pcntl", "--ignore-platform-req=ext-posix",
+                ],
+                cwd=project_dir,
+                env=env,
+                timeout=180,
+            )
+            _run(
+                ["php", "artisan", "package:discover", "--ansi"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+            _run(
+                ["php", "artisan", "horizon:install", "--no-interaction"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
 
         # ── 4. npm install (chisel apply callback needs node_modules) ─────────
         # Strip remote Google/Bunny font imports first: laravel-vite-plugin
