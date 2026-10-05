@@ -380,11 +380,14 @@ def _build_inertia_project_zip_sync(
        ``key:generate``.
     3. If ``testing_framework == "pest"``, swap PHPUnit for Pest
        (``composer remove phpunit/phpunit``, ``composer require pestphp/pest``,
-       ``php artisan pest:install``).
+       ``./vendor/bin/pest --init``). Every Composer call before step 5 runs
+       with ``--no-scripts`` — see the note in step 3.
     4. ``npm install`` — required before ``install:features`` because chisel's
        ``apply`` callback runs ``npm run lint`` / ``npm run format``.
     5. ``php artisan install:features --no-interaction --answers=<json>`` —
        sculpts the project according to the requested auth features (default: none).
+       For Pest, the remaining PHPUnit tests are then converted with
+       ``pest-plugin-drift`` (after chisel, which prunes tests by PHPUnit form).
     6. Read the generated APP_KEY; render and write Docker scaffold files.
     7. Overwrite ``.env`` with the Docker-ready environment (DB → Docker service
        hostnames, Redis, etc.).
@@ -441,22 +444,46 @@ def _build_inertia_project_zip_sync(
         )
 
         # ── 3. Swap the test runner to Pest, if requested ─────────────────────
+        # Every ``composer remove`` / ``composer require`` that runs before
+        # step 5 MUST pass ``--no-scripts``. The starter kits ship
+        # ``post-update-cmd: ["@php artisan install:features", ...]`` until
+        # chisel has run, and both commands fire ``post-update-cmd``. Letting it
+        # run would execute ``install:features`` with no answers, and chisel
+        # deletes itself afterwards, so the real step 5 would fail with
+        # "Command install:features is not defined". Any future option that
+        # adds a package before step 5 should follow the same pattern: pass
+        # ``--no-scripts`` and rely on the ``package:discover`` below.
         if context.get("testing_framework") == "pest":
+            # Same flow as ``laravel new --pest`` (laravel/installer NewCommand).
             _run(
-                ["composer", "remove", "phpunit/phpunit", "--dev", "--no-interaction"],
+                ["composer", "remove", "phpunit/phpunit", "--dev", "--no-interaction", "--no-scripts"],
                 cwd=project_dir,
                 env=env,
                 timeout=120,
-                check=False,
             )
             _run(
-                ["composer", "require", "pestphp/pest", "--dev", "--no-interaction", "-W"],
+                [
+                    "composer", "require", "pestphp/pest", "pestphp/pest-plugin-laravel",
+                    "--dev", "--no-interaction", "-W", "--no-scripts",
+                ],
                 cwd=project_dir,
                 env=env,
                 timeout=180,
             )
+            # Pest 2+ has no ``pest:install`` artisan command (that was Pest 1's
+            # Laravel plugin); ``--init`` scaffolds tests/Pest.php instead.
+            pest_env = {**env, "PEST_NO_SUPPORT": "true"}
             _run(
-                ["php", "artisan", "pest:install", "--no-interaction"],
+                ["php", "./vendor/bin/pest", "--init"],
+                cwd=project_dir,
+                env=pest_env,
+                timeout=60,
+            )
+
+            # ``--no-scripts`` skipped the hooks' package discovery; this is the
+            # part of them the installer still needs.
+            _run(
+                ["php", "artisan", "package:discover", "--ansi"],
                 cwd=project_dir,
                 env=env,
                 timeout=60,
@@ -484,6 +511,34 @@ def _build_inertia_project_zip_sync(
             env=env,
             timeout=300,
         )
+
+        # ── 5b. Convert the kit's PHPUnit tests to Pest syntax ────────────────
+        # Deliberately after chisel, as in ``laravel new --pest``: chisel prunes
+        # the tests of unselected features by their PHPUnit method form, so it
+        # cannot see them once they are Pest closures (a ``2fa`` project without
+        # ``password-confirmation`` would keep a test that can only fail). Still
+        # ``--no-scripts``, consistent with the rule in step 3.
+        if context.get("testing_framework") == "pest":
+            pest_env = {**env, "PEST_NO_SUPPORT": "true"}
+            _run(
+                ["composer", "require", "pestphp/pest-plugin-drift", "--dev", "--no-interaction", "--no-scripts"],
+                cwd=project_dir,
+                env=env,
+                timeout=180,
+            )
+            _run(
+                ["php", "./vendor/bin/pest", "--drift"],
+                cwd=project_dir,
+                env=pest_env,
+                timeout=120,
+            )
+            # One-shot conversion plugin: drop it again.
+            _run(
+                ["composer", "remove", "pestphp/pest-plugin-drift", "--dev", "--no-interaction", "--no-scripts"],
+                cwd=project_dir,
+                env=env,
+                timeout=120,
+            )
 
         # ── 6. Read APP_KEY ───────────────────────────────────────────────────
         app_key = ""
