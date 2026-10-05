@@ -236,6 +236,65 @@ def _configure_trusted_proxies(project_dir: Path) -> None:
     app_php.write_text(patched)
 
 
+_PRELOAD_LINK_HEADERS_ENTRY_RE = re.compile(
+    r"^[ \t]*AddLinkHeadersForPreloadedAssets::class,[ \t]*\n", re.MULTILINE
+)
+
+_PRELOAD_LINK_HEADERS_IMPORT_RE = re.compile(
+    r"^use Illuminate\\Http\\Middleware\\AddLinkHeadersForPreloadedAssets;\n",
+    re.MULTILINE,
+)
+
+_WEB_MIDDLEWARE_APPEND_RE = re.compile(
+    r"^([ \t]*)\$middleware->web\(append: \[", re.MULTILINE
+)
+
+_PRELOAD_LINK_HEADERS_COMMENT = (
+    "// Deliberately not registering AddLinkHeadersForPreloadedAssets: it",
+    '// duplicates the <link rel="preload"> tags @vite()/@fonts already emit',
+    "// in the document <head>, and its only extra effect, enabling HTTP/2",
+    "// Server Push, is a feature no major browser still honors. With enough",
+    "// fonts/chunks, the resulting Link header can exceed reverse-proxy",
+    "// header-buffer limits and cause 502s.",
+)
+
+
+def _remove_preload_link_headers(project_dir: Path) -> None:
+    """
+    Drop ``AddLinkHeadersForPreloadedAssets`` from ``bootstrap/app.php``.
+
+    The starter kits append this middleware to the ``web`` group. It copies
+    every asset Vite preloads (fonts, JS chunks, CSS) into a ``Link``
+    response header, which grows with every font weight and chunk until it
+    exceeds the reverse proxy's header-buffer limit and the request fails
+    with a 502. It only duplicates the ``<link rel="preload">`` tags that
+    ``@vite()`` already emits in the document ``<head>``; its one extra
+    effect, HTTP/2 Server Push, is no longer honored by any major browser.
+    Goes with ``_configure_trusted_proxies``, since both exist because the
+    app always sits behind a reverse proxy.
+
+    Does nothing if the middleware isn't registered, so it is idempotent
+    and safe if a starter kit stops shipping it.
+    """
+    app_php = project_dir / "bootstrap" / "app.php"
+    if not app_php.is_file():
+        return
+    original = app_php.read_text()
+    patched, count = _PRELOAD_LINK_HEADERS_ENTRY_RE.subn("", original)
+    if not count:
+        return
+    patched = _PRELOAD_LINK_HEADERS_IMPORT_RE.sub("", patched)
+    patched = _WEB_MIDDLEWARE_APPEND_RE.sub(
+        lambda match: "".join(
+            f"{match.group(1)}{line}\n" for line in _PRELOAD_LINK_HEADERS_COMMENT
+        )
+        + match.group(0),
+        patched,
+        count=1,
+    )
+    app_php.write_text(patched)
+
+
 _BOOT_METHOD_RE = re.compile(r"(public function boot\(\): void\s*\{\n)")
 
 _FORCE_SCHEME_SNIPPET = """        // The app container sits behind a reverse proxy that terminates TLS
@@ -497,6 +556,7 @@ def _build_inertia_project_zip_sync(
         _strip_remote_font_imports(project_dir)
         _configure_vite_dev_server(project_dir)
         _configure_trusted_proxies(project_dir)
+        _remove_preload_link_headers(project_dir)
         _configure_force_https_scheme(project_dir)
         _run(["npm", "install"], cwd=project_dir, env=env, timeout=300)
 
