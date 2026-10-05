@@ -29,7 +29,8 @@ Vite dev server: `http://localhost:5173`
 | `docker-compose.yml` | Dev stack: app (`php artisan serve`) + Vite (Node 20){% if db != 'sqlite' %} + {{ db }}{% endif %} |
 | `docker-compose.stage.yml` | Staging stack: nginx + php-fpm, no source mount or Vite sidecar |
 | `docker-compose.prod.yml` | Production stack: nginx + php-fpm, no source mount or Vite sidecar |
-| `docker/nginx.conf` | nginx vhost (FastCGI → php-fpm) |
+| `docker/nginx.conf` | nginx vhost (FastCGI → php-fpm), request body limit and FastCGI header buffers |
+| `docker/php/app.ini` | PHP upload limits (`upload_max_filesize`, `post_max_size`) and `memory_limit`; installed as `conf.d/zz-app.ini` |
 | `docker/dev.entrypoint.sh` | Dev-only entrypoint: composer install, wait-for-DB/migrate, wait-for-Vite, `php artisan serve` |
 | `docker/prod.entrypoint.sh` | Stage/prod entrypoint: wait-for-DB/migrate, then php-fpm + nginx |
 | `.dockerignore` | Excludes `.git`, `node_modules`, `vendor`, `public/build`, `.env*`, log files from the build context |
@@ -46,6 +47,7 @@ Vite dev server: `http://localhost:5173`
 | Testing | {{ testing_framework | upper }} |
 | Database | {{ db }} |
 | PHP version | {{ php_version }} |
+| Max upload size | {{ max_upload_mb }} MB (request body limit {{ post_max_mb }} MB) |
 {% if install_boost %}| Laravel Boost | yes |
 {% endif %}
 

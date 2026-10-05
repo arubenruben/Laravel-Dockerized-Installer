@@ -16,6 +16,8 @@ RUN apk add --no-cache \
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY docker/nginx.conf /etc/nginx/http.d/default.conf
+# `zz-` sorts last in conf.d, so these values override the base image's ini files.
+COPY docker/php/app.ini /usr/local/etc/php/conf.d/zz-app.ini
 
 WORKDIR /var/www/html
 COPY . .

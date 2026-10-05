@@ -100,6 +100,16 @@ async def new_inertia(
         le=65535,
         description="Host port mapped to the Laravel app container (port 8000 inside in dev, 80 in stage/prod).",
     ),
+    max_upload_mb: int = Query(
+        default=10,
+        ge=1,
+        le=1024,
+        description=(
+            "Largest file upload the app accepts, in MB. Sets PHP's `upload_max_filesize` to this "
+            "value and `post_max_size` plus nginx's `client_max_body_size` to this value + 2 MB, "
+            "so the request limit leaves room for the form fields around the file."
+        ),
+    ),
     db: Literal["mysql", "postgres", "sqlite"] = Query(
         default="mysql",
         description="Database engine to configure in the Compose stacks and .env.",
@@ -125,7 +135,10 @@ async def new_inertia(
     - ``docker-compose.stage.yml`` / ``docker-compose.prod.yml`` – nginx + php-fpm stacks built
       from the same Dockerfile, no source bind mount or Vite sidecar, secrets via env vars
     - ``docker/nginx.conf``, ``docker/dev.entrypoint.sh``, ``docker/prod.entrypoint.sh`` –
-      nginx vhost and the dev/stage-prod entrypoint scripts
+      nginx vhost (with ``client_max_body_size`` and larger FastCGI header buffers) and the
+      dev/stage-prod entrypoint scripts
+    - ``docker/php/app.ini`` – PHP ``upload_max_filesize`` / ``post_max_size`` (from
+      ``max_upload_mb``) and ``memory_limit``, installed as ``conf.d/zz-app.ini``
     - ``.dockerignore`` – excludes ``.git``, ``node_modules``, ``vendor``, ``public/build``,
       ``.env*``, and log files from the build context
     - ``.env`` / ``.env.docker`` – pre-filled environment variables including a generated ``APP_KEY``
@@ -143,6 +156,9 @@ async def new_inertia(
     template_context = {
         "php_version": php_version,
         "app_port": str(app_port),
+        "max_upload_mb": max_upload_mb,
+        # Headroom for the other form fields and multipart framing around the file.
+        "post_max_mb": max_upload_mb + 2,
         "db": db,
         "app_name": app_name,
         "starter_kit": starter_kit,
