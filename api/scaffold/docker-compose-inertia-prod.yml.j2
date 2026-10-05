@@ -5,9 +5,9 @@
 # `docker compose` refuses to start without REDIS_PASSWORD (the Redis password).
 {% endif %}
 {% if queue != 'sync' %}
-# `worker` reuses the app image and processes queued jobs; on stop it gets
+# `worker` reuses the app image and processes queued jobs{% if horizon %} through Laravel Horizon{% endif %}; on stop it gets
 # WORKER_STOP_GRACE_PERIOD (default 90s) to finish its job — keep it above the
-# 60s default job timeout, or deploys will kill jobs mid-run.
+# {% if horizon %}longest job timeout (60s by default in config/horizon.php){% else %}60s default job timeout{% endif %}, or deploys will kill jobs mid-run.
 {% endif %}
 x-app-environment: &app-environment
   APP_ENV: production
@@ -83,10 +83,14 @@ services:
       - worker
       - php
       - artisan
+{% if horizon %}
+      - horizon
+{% else %}
       - queue:work
       - --sleep=3
       - --tries=3
       - --max-time=3600
+{% endif %}
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-90s}
     depends_on:
       # A healthy app means migrations have run.

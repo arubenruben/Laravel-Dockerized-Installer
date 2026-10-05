@@ -26,7 +26,7 @@ Vite dev server: `http://localhost:5173`
 |---|---|
 | `app/`, `config/`, `routes/`, … | Full Laravel project source |
 | `Dockerfile` | PHP {{ php_version }}-fpm image; builds assets and installs dependencies at build time, serves via nginx + php-fpm |
-| `docker-compose.yml` | Dev stack: app (`php artisan serve`) + Vite (Node 20){% if queue != 'sync' %} + queue worker (`queue:listen`){% endif %}{% if db != 'sqlite' %} + {{ db }}{% endif %}{% if queue == 'redis' %} + redis{% endif %} |
+| `docker-compose.yml` | Dev stack: app (`php artisan serve`) + Vite (Node 20){% if queue != 'sync' %} + queue worker (`{{ 'horizon' if horizon else 'queue:listen' }}`){% endif %}{% if db != 'sqlite' %} + {{ db }}{% endif %}{% if queue == 'redis' %} + redis{% endif %} |
 | `docker-compose.stage.yml` | Staging stack: nginx + php-fpm{% if queue != 'sync' %} + queue worker{% endif %}, no source mount or Vite sidecar |
 | `docker-compose.prod.yml` | Production stack: nginx + php-fpm{% if queue != 'sync' %} + queue worker{% endif %}, no source mount or Vite sidecar |
 | `docker/nginx.conf` | nginx vhost (FastCGI → php-fpm), request body limit and FastCGI header buffers |
@@ -47,7 +47,8 @@ Vite dev server: `http://localhost:5173`
 | Testing | {{ testing_framework | upper }} |
 | Database | {{ db }} |
 | Queue | {{ queue }} |
-| PHP version | {{ php_version }} |
+{% if horizon %}| Horizon | yes |
+{% endif %}| PHP version | {{ php_version }} |
 | Max upload size | {{ max_upload_mb }} MB (request body limit {{ post_max_mb }} MB) |
 {% if install_boost %}| Laravel Boost | yes |
 {% endif %}
@@ -70,6 +71,9 @@ docker compose exec app php artisan migrate
 
 # Tail the queue worker
 docker compose logs -f worker
+{% endif %}{% if horizon %}
+# Restart Horizon so it picks up code changes (the container restarts itself)
+docker compose exec worker php artisan horizon:terminate
 {% endif %}```
 
 ## Queue
@@ -82,14 +86,20 @@ Queued jobs (`QUEUE_CONNECTION={{ queue }}`) are processed by the `worker` servi
 
 | Stack | Worker command | Notes |
 |---|---|---|
+{% if horizon -%}
+| Dev | `php artisan horizon` | Does not reload your code between jobs: run `php artisan horizon:terminate` after editing job code |
+| Staging | `php artisan horizon --environment=production` | Runs as `www-data`; starts once `app` is healthy, i.e. migrations have run. `--environment=production` because `config/horizon.php` only defines the `production` and `local` supervisors, and staging runs with `APP_ENV=staging` |
+| Production | `php artisan horizon` | Runs as `www-data`; starts once `app` is healthy, i.e. migrations have run |
+{%- else -%}
 | Dev | `php artisan queue:listen --tries=1 --timeout=0` | Reloads your code on every job |
 | Staging / production | `php artisan queue:work --sleep=3 --tries=3 --max-time=3600` | Runs as `www-data`; starts once `app` is healthy, i.e. migrations have run |
+{%- endif %}
 
 Staging/production worker settings (shell-exported env vars, like the other secrets):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WORKER_STOP_GRACE_PERIOD` | `90s` | How long `docker compose stop worker` (and a deploy) waits for the running job to finish. Keep it above the job timeout (`queue:work` defaults to 60 s) |
+| `WORKER_STOP_GRACE_PERIOD` | `90s` | How long `docker compose stop worker` (and a deploy) waits for the running job to finish. Must exceed the longest job timeout{% if horizon %} (the supervisors' `timeout` in `config/horizon.php` is 60 s by default){% else %} (`queue:work` defaults to 60 s){% endif %}, or the job is killed mid-run |
 {% if queue == 'redis' -%}
 | `REDIS_PASSWORD` | _(required)_ | Password of the staging/production Redis; `docker compose` refuses to start without it |
 
@@ -98,6 +108,18 @@ Redis is reached through the pure-PHP `predis/predis` client (installed for you,
 Jobs are stored in the `jobs` table, created by the starter kit's migration. To use Redis instead, regenerate the project with `queue=redis`.
 {%- endif %}
 {%- endif %}
+{% if horizon %}
+
+## Horizon
+
+The `worker` service runs [Laravel Horizon](https://laravel.com/docs/horizon), which supervises the Redis queue workers; its settings (supervisors, processes, timeouts, retries) live in `config/horizon.php`.
+
+Dashboard: [`http://localhost:{{ app_port }}/horizon`](http://localhost:{{ app_port }}/horizon)
+
+Outside the `local` environment (staging, production) the dashboard is only reachable by users allowed by the `viewHorizon` gate in `app/Providers/HorizonServiceProvider.php`. It ships with an empty list of allowed emails, so add yours there before deploying.
+
+If a job can run longer than 60 s, raise `timeout` for its supervisor in `config/horizon.php` (keeping `retry_after` in `config/queue.php` above it) **and** raise `WORKER_STOP_GRACE_PERIOD` above it: otherwise `docker compose stop worker` kills the job once the grace period runs out.
+{% endif %}
 
 ## Stack
 
