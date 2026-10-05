@@ -338,6 +338,83 @@ def _configure_force_https_scheme(project_dir: Path) -> None:
     provider_php.write_text(patched)
 
 
+# Matches the entry whether ``telescope:install`` wrote it fully qualified
+# (``App\Providers\TelescopeServiceProvider::class,``) or a starter kit
+# imports the class and lists it bare.
+_TELESCOPE_PROVIDER_ENTRY_RE = re.compile(
+    r"^[ \t]*(?:\\?App\\Providers\\)?TelescopeServiceProvider::class,?[ \t]*\n",
+    re.MULTILINE,
+)
+
+_TELESCOPE_PROVIDER_IMPORT_RE = re.compile(
+    r"^use App\\Providers\\TelescopeServiceProvider;\n", re.MULTILINE
+)
+
+_REGISTER_METHOD_RE = re.compile(
+    r"(public function register\(\)(?:: void)?\s*\{\n)([ \t]*//[ \t]*\n)?"
+)
+
+_TELESCOPE_REGISTER_SNIPPET = """        // Telescope is a require-dev package (never installed in the
+        // `composer install --no-dev` production/CI image), so it's only
+        // safe to register when its base class actually exists.
+        if (class_exists(TelescopeApplicationServiceProvider::class)) {
+            $this->app->register(TelescopeServiceProvider::class);
+        }
+"""
+
+_TELESCOPE_BASE_CLASS_IMPORT = "use Laravel\\Telescope\\TelescopeApplicationServiceProvider;\n"
+
+
+def _configure_telescope_dev_only(project_dir: Path) -> None:
+    """
+    Register ``App\\Providers\\TelescopeServiceProvider`` only when Telescope is installed.
+
+    ``telescope:install`` lists that provider in ``bootstrap/providers.php``,
+    and it extends ``Laravel\\Telescope\\TelescopeApplicationServiceProvider``.
+    Telescope is a ``require-dev`` package and the generated image runs
+    ``composer install --no-dev``, so in staging and production that base class
+    is missing and every request would fatal. Move the registration into
+    ``AppServiceProvider::register()`` behind a ``class_exists`` check instead.
+
+    Unlike the other patches, this one raises when it cannot apply: leaving
+    the provider registered unconditionally would ship a project that works
+    in dev and fatals the moment the production stack boots.
+    """
+    providers_php = project_dir / "bootstrap" / "providers.php"
+    provider_php = project_dir / "app" / "Providers" / "AppServiceProvider.php"
+
+    if providers_php.is_file():
+        providers = providers_php.read_text()
+        providers = _TELESCOPE_PROVIDER_ENTRY_RE.sub("", providers)
+        providers = _TELESCOPE_PROVIDER_IMPORT_RE.sub("", providers)
+        if "TelescopeServiceProvider" in providers:
+            raise RuntimeError(
+                "bootstrap/providers.php still references TelescopeServiceProvider "
+                "after removing its entry; it would fatal under `composer install --no-dev`."
+            )
+        providers_php.write_text(providers)
+
+    if not provider_php.is_file():
+        raise RuntimeError("app/Providers/AppServiceProvider.php not found; cannot register Telescope.")
+    original = provider_php.read_text()
+    if "TelescopeApplicationServiceProvider" in original:
+        return
+    patched, count = _REGISTER_METHOD_RE.subn(
+        lambda match: match.group(1) + _TELESCOPE_REGISTER_SNIPPET, original, count=1
+    )
+    if not count:
+        raise RuntimeError(
+            "Could not find `public function register()` in AppServiceProvider.php "
+            "to register Telescope in."
+        )
+    patched, import_count = _LAST_USE_STATEMENT_RE.subn(
+        lambda match: match.group(1) + _TELESCOPE_BASE_CLASS_IMPORT, patched, count=1
+    )
+    if not import_count:
+        raise RuntimeError("Could not find a `use` statement in AppServiceProvider.php to extend.")
+    provider_php.write_text(patched)
+
+
 def _build_env() -> dict[str, str]:
     """Return an os.environ copy augmented with the Composer global bin dir."""
     env = os.environ.copy()
@@ -443,9 +520,12 @@ def _build_inertia_project_zip_sync(
        ``./vendor/bin/pest --init``). Every Composer call before step 5 runs
        with ``--no-scripts`` — see the note in step 3.
        If ``queue == "redis"``, ``composer require predis/predis`` (same rule),
-       then ``package:discover``. If ``horizon`` is set, ``composer require
-       laravel/horizon`` (same rule), ``package:discover`` and
-       ``horizon:install``.
+       then ``package:discover``.
+       If ``telescope`` is set, ``composer require laravel/telescope --dev``
+       (same rule), ``package:discover``, ``telescope:install``, then
+       ``_configure_telescope_dev_only`` so the ``--no-dev`` image still boots.
+       If ``horizon`` is set, ``composer require laravel/horizon`` (same rule),
+       ``package:discover`` and ``horizon:install``.
     4. ``npm install`` — required before ``install:features`` because chisel's
        ``apply`` callback runs ``npm run lint`` / ``npm run format``.
     5. ``php artisan install:features --no-interaction --answers=<json>`` —
@@ -570,7 +650,32 @@ def _build_inertia_project_zip_sync(
                 timeout=60,
             )
 
-        # ── 3c. Laravel Horizon ───────────────────────────────────────────────
+        # ── 3c. Telescope (dev only) ──────────────────────────────────────────
+        # ``--dev`` keeps it out of the ``composer install --no-dev`` image, and
+        # ``_configure_telescope_dev_only`` makes sure nothing in the app needs
+        # it there. Same ``--no-scripts`` rule as step 3.
+        if context.get("telescope"):
+            _run(
+                ["composer", "require", "laravel/telescope", "--dev", "--no-interaction", "--no-scripts"],
+                cwd=project_dir,
+                env=env,
+                timeout=180,
+            )
+            _run(
+                ["php", "artisan", "package:discover", "--ansi"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+            _run(
+                ["php", "artisan", "telescope:install", "--no-interaction"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+            _configure_telescope_dev_only(project_dir)
+
+        # ── 3d. Laravel Horizon ───────────────────────────────────────────────
         # Same ``--no-scripts`` rule as step 3. The image has ``pcntl`` and
         # ``posix``, which Horizon requires, but this host may not; Composer
         # would refuse the install here, so those platform checks are skipped.
