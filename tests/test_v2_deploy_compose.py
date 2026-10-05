@@ -238,7 +238,8 @@ def test_header_names_the_environment_and_project(client):
 def test_readme_documents_both_deploy_paths_and_the_project_names(client):
     readme = _text(_get_project(client), "README.md")
 
-    assert "## Deploying staging and production" in readme
+    assert "## Staging and production" in readme
+    assert "### Deploying" in readme
     assert "docker compose -f docker-compose.prod.yml up -d --build" in readme
     assert "export APP_IMAGE=<registry>/<image> IMAGE_TAG=<tag>" in readme
     assert "docker compose -f docker-compose.prod.yml pull" in readme

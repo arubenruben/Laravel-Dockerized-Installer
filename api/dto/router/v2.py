@@ -209,8 +209,8 @@ async def new_inertia(
 
     - ``Dockerfile`` – PHP ``php_version``-fpm image; builds assets (``npm run build``) and
       installs Composer dependencies at build time, serves via nginx + php-fpm
-    - ``docker-compose.yml`` – dev stack: app (``php artisan serve``) + **vite** (Node 20) +
-      **worker** (``queue:listen``, or ``php artisan horizon`` when ``horizon=true``; none when
+    - ``docker-compose.yml`` – dev stack: app (``php artisan serve``) + **vite** (dev server on a PHP CLI image
+      with Node.js) + **worker** (``queue:listen``, or ``php artisan horizon`` when ``horizon=true``; none when
       ``queue=sync``) + db (+ redis when ``queue=redis``), app on ``app_port``, Vite on 5173
     - ``docker-compose.stage.yml`` / ``docker-compose.prod.yml`` – nginx + php-fpm stacks built
       from the same Dockerfile, no source bind mount or Vite sidecar, secrets via env vars, plus
