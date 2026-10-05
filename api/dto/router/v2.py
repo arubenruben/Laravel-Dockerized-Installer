@@ -114,6 +114,17 @@ async def new_inertia(
         default="mysql",
         description="Database engine to configure in the Compose stacks and .env.",
     ),
+    queue: Literal["database", "redis", "sync"] = Query(
+        default="database",
+        description=(
+            "Queued job processing (`QUEUE_CONNECTION`). With `database` or `redis`, every stack gets a "
+            "`worker` service that processes queued jobs in the background. `database` works out of the "
+            "box, because the starter kit ships the `jobs` table migration. `redis` also adds a Redis "
+            "service (password-protected and persistent in stage/prod) and installs the pure-PHP "
+            "`predis/predis` client. `sync` means no queue: no worker and no Redis, and jobs run inline "
+            "in the web request."
+        ),
+    ),
     app_name: str = Query(
         default="my-app",
         description=(
@@ -131,12 +142,15 @@ async def new_inertia(
     - ``Dockerfile`` – PHP ``php_version``-fpm image; builds assets (``npm run build``) and
       installs Composer dependencies at build time, serves via nginx + php-fpm
     - ``docker-compose.yml`` – dev stack: app (``php artisan serve``) + **vite** (Node 20) +
-      db, app on ``app_port``, Vite on 5173
+      **worker** (``queue:listen``, unless ``queue=sync``) + db (+ redis when ``queue=redis``),
+      app on ``app_port``, Vite on 5173
     - ``docker-compose.stage.yml`` / ``docker-compose.prod.yml`` – nginx + php-fpm stacks built
-      from the same Dockerfile, no source bind mount or Vite sidecar, secrets via env vars
+      from the same Dockerfile, no source bind mount or Vite sidecar, secrets via env vars, plus
+      a **worker** (``queue:work``, run as ``www-data``, unless ``queue=sync``) that reuses the
+      app image (and a password-protected, persistent redis when ``queue=redis``)
     - ``docker/nginx.conf``, ``docker/dev.entrypoint.sh``, ``docker/prod.entrypoint.sh`` –
       nginx vhost (with ``client_max_body_size`` and larger FastCGI header buffers) and the
-      dev/stage-prod entrypoint scripts
+      dev/stage-prod entrypoint scripts (the latter also has a ``worker`` mode)
     - ``docker/php/app.ini`` – PHP ``upload_max_filesize`` / ``post_max_size`` (from
       ``max_upload_mb``) and ``memory_limit``, installed as ``conf.d/zz-app.ini``
     - ``.dockerignore`` – excludes ``.git``, ``node_modules``, ``vendor``, ``public/build``,
@@ -160,6 +174,7 @@ async def new_inertia(
         # Headroom for the other form fields and multipart framing around the file.
         "post_max_mb": max_upload_mb + 2,
         "db": db,
+        "queue": queue,
         "app_name": app_name,
         "starter_kit": starter_kit,
         "auth_provider": auth_provider,

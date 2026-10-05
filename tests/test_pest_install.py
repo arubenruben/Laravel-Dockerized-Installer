@@ -20,6 +20,7 @@ CONTEXT = {
     "max_upload_mb": 10,
     "post_max_mb": 12,
     "db": "sqlite",
+    "queue": "database",
     "app_name": "demo",
     "starter_kit": "react",
     "auth_provider": "laravel",

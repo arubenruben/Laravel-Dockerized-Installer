@@ -383,6 +383,8 @@ def _build_inertia_project_zip_sync(
        (``composer remove phpunit/phpunit``, ``composer require pestphp/pest``,
        ``./vendor/bin/pest --init``). Every Composer call before step 5 runs
        with ``--no-scripts`` — see the note in step 3.
+       If ``queue == "redis"``, ``composer require predis/predis`` (same rule),
+       then ``package:discover``.
     4. ``npm install`` — required before ``install:features`` because chisel's
        ``apply`` callback runs ``npm run lint`` / ``npm run format``.
     5. ``php artisan install:features --no-interaction --answers=<json>`` —
@@ -483,6 +485,23 @@ def _build_inertia_project_zip_sync(
 
             # ``--no-scripts`` skipped the hooks' package discovery; this is the
             # part of them the installer still needs.
+            _run(
+                ["php", "artisan", "package:discover", "--ansi"],
+                cwd=project_dir,
+                env=env,
+                timeout=60,
+            )
+
+        # ── 3b. Redis queue client ────────────────────────────────────────────
+        # predis is pure PHP, so the image needs no ``phpredis`` extension. Same
+        # ``--no-scripts`` rule as step 3.
+        if context.get("queue") == "redis":
+            _run(
+                ["composer", "require", "predis/predis", "--no-interaction", "--no-scripts"],
+                cwd=project_dir,
+                env=env,
+                timeout=180,
+            )
             _run(
                 ["php", "artisan", "package:discover", "--ansi"],
                 cwd=project_dir,
