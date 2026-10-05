@@ -1,5 +1,5 @@
 import logging
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v2", tags=["v2"])
 
 PHP_VERSION_PATTERN = r"^\d+\.\d+$"
+# What Docker accepts as a network name.
+PROXY_NETWORK_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
 
 
 # ── Inertia starter-kit route ────────────────────────────────────────────────
@@ -45,7 +47,12 @@ PHP_VERSION_PATTERN = r"^\d+\.\d+$"
             "content": {"application/zip": {}},
             "description": "Ready-to-run Laravel + Inertia.js Docker project zip",
         },
-        422: {"description": "Invalid parameters, e.g. `horizon=true` without `queue=redis`"},
+        422: {
+            "description": (
+                "Invalid parameters, e.g. `horizon=true` without `queue=redis`, or a "
+                "`proxy_network` that is not a valid Docker network name"
+            )
+        },
         500: {"description": "Server-side project generation failed"},
     },
     tags=["v2"],
@@ -100,6 +107,20 @@ async def new_inertia(
         ge=1024,
         le=65535,
         description="Host port mapped to the Laravel app container (port 8000 inside in dev, 80 in stage/prod).",
+    ),
+    proxy_network: Optional[str] = Query(
+        default=None,
+        pattern=PROXY_NETWORK_PATTERN,
+        max_length=64,
+        description=(
+            "Name of an existing external Docker network that a shared reverse proxy "
+            "(Traefik, Caddy, nginx-proxy, ...) is attached to. When set, the staging and "
+            "production `app` services publish no host port; instead they join that network "
+            "under the alias `<app-slug>-stage` / `<app-slug>-prod`, which the proxy routes "
+            "to (`http://<alias>:80`). `worker`, `db` and `redis` stay on the stack's own "
+            "network. Create the network once with `docker network create <name>`. When "
+            "omitted, `app` publishes `${APP_PORT}:80` as before. The dev stack is not affected."
+        ),
     ),
     max_upload_mb: int = Query(
         default=10,
@@ -167,7 +188,8 @@ async def new_inertia(
       from the same Dockerfile, no source bind mount or Vite sidecar, secrets via env vars, plus
       a **worker** (``queue:work``, or ``php artisan horizon`` when ``horizon=true``; run as
       ``www-data``, none when ``queue=sync``) that reuses the app image (and a password-protected,
-      persistent redis when ``queue=redis``)
+      persistent redis when ``queue=redis``); with ``proxy_network`` the ``app`` publishes no
+      port and joins that external network under an alias for the reverse proxy to route to
     - ``docker/nginx.conf``, ``docker/dev.entrypoint.sh``, ``docker/prod.entrypoint.sh`` –
       nginx vhost (with ``client_max_body_size`` and larger FastCGI header buffers) and the
       dev/stage-prod entrypoint scripts (the latter also has a ``worker`` mode)
@@ -193,6 +215,7 @@ async def new_inertia(
     template_context = {
         "php_version": php_version,
         "app_port": str(app_port),
+        "proxy_network": proxy_network,
         "max_upload_mb": max_upload_mb,
         # Headroom for the other form fields and multipart framing around the file.
         "post_max_mb": max_upload_mb + 2,

@@ -51,7 +51,8 @@ Telescope: `http://localhost:{{ app_port }}/telescope`{% endif %}
 {% if horizon %}| Horizon | yes |
 {% endif %}| PHP version | {{ php_version }} |
 | Max upload size | {{ max_upload_mb }} MB (request body limit {{ post_max_mb }} MB) |
-{% if install_boost %}| Laravel Boost | yes |
+{% if proxy_network %}| Proxy network | `{{ proxy_network }}` (external; staging/production `app` joins it and publishes no host port) |
+{% endif %}{% if install_boost %}| Laravel Boost | yes |
 {% endif %}{% if telescope %}| Laravel Telescope | yes (dev only) |
 {% endif %}
 
@@ -146,7 +147,41 @@ docker compose -f docker-compose.prod.yml up -d --no-build
 The image is `${APP_IMAGE:-{{ app_slug }}}:${IMAGE_TAG:-latest}`, i.e. `{{ app_slug }}:latest` when neither variable is set. Keep both set (exported, or in the env file) for every command that starts containers: with only `pull` given them, `up` would look for `{{ app_slug }}:latest`.
 {%- if queue != 'sync' %} `app` is the only service that builds or pulls the image; `worker` reuses it (`pull_policy: never`), so only one build ever runs.{% endif %}
 
-Both stacks listen on the host port `APP_PORT`, which defaults to `8000` for production and `8001` for staging so they can start together; set `APP_PORT` to move either. Staging and production are separate environments, so give each its own secrets with `--env-file` rather than one shared `.env`.
+{% if proxy_network %}Neither stack publishes a host port, so `APP_PORT` has no effect: `app` is reached through the reverse proxy on the `{{ proxy_network }}` network (see [Reverse proxy and TLS](#reverse-proxy-and-tls)).{% else %}Both stacks listen on the host port `APP_PORT`, which defaults to `8000` for production and `8001` for staging so they can start together; set `APP_PORT` to move either.{% endif %} Staging and production are separate environments, so give each its own secrets with `--env-file` rather than one shared `.env`.
+
+## Reverse proxy and TLS
+{% if proxy_network %}
+The stacks serve plain HTTP and do not terminate TLS: a TLS-terminating reverse proxy (Traefik, Caddy, nginx-proxy, …) sits in front of them. This project was generated with `proxy_network={{ proxy_network }}`, so in both stacks `app` publishes no host port and joins the external Docker network `{{ proxy_network }}` instead, under a per-environment alias. Every other service stays on the stack's own network, out of the proxy's reach.
+
+1. Create the network once on the host, unless the proxy's own stack already did, and attach the proxy to it:
+
+   ```bash
+   docker network create {{ proxy_network }}
+   ```
+
+   It is declared `external`, so Compose neither creates nor removes it: `docker compose up` fails if it does not exist, and `down` leaves it alone.
+2. Start the stacks as described above.
+3. Route each domain to the alias of its environment, on port 80. Do not use `app`: Compose also registers the service name on every network the service joins, so `app` resolves to the `app` of both stacks (and of any other project on the network), and a proxy using it would balance between environments.
+
+   | Environment | Alias | Upstream for the proxy |
+   |---|---|---|
+   | Staging | `{{ app_slug }}-stage` | `http://{{ app_slug }}-stage:80` |
+   | Production | `{{ app_slug }}-prod` | `http://{{ app_slug }}-prod:80` |
+
+Staging and production can join the network at the same time, because their aliases differ.
+
+Have the proxy send `X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Forwarded-For` (most do by default). The app trusts them (`trustProxies` in `bootstrap/app.php`), so it builds `https://` URLs and sees the real client IP. It trusts them from any sender, so only attach containers you trust to this network. Set `APP_URL` to the public `https://` URL of each environment.
+
+To check the wiring from another container on the network (the `/up` health route answers `200`):
+
+```bash
+docker run --rm --network {{ proxy_network }} curlimages/curl -sSf -o /dev/null -w '%{http_code}\n' http://{{ app_slug }}-prod/up
+```
+{%- else %}
+The stacks serve plain HTTP and do not terminate TLS. For anything beyond a trial, put a TLS-terminating reverse proxy (Traefik, Caddy, nginx, …) in front of the published port (`APP_PORT`) and point your domain at the proxy. Have it send `X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Forwarded-For`: the app trusts them (`trustProxies` in `bootstrap/app.php`), so it builds `https://` URLs and sees the real client IP. It trusts them from any sender, so do not expose the port to untrusted clients directly. Set `APP_URL` to the public `https://` URL of each environment.
+
+If the proxy runs in Docker on the same host, you can skip the published port: regenerate the project with `proxy_network=<name>` (an existing Docker network the proxy is attached to) and `app` joins that network under the alias `{{ app_slug }}-stage` / `{{ app_slug }}-prod` instead.
+{%- endif %}
 
 ## Storage and persistent data
 

@@ -16,8 +16,15 @@
 #
 # This stack is its own Compose project, `{{ app_slug }}-{{ env_suffix }}`. The other environment's file
 # declares a different project name, so the two stacks run side by side from the
-# same checkout without sharing containers or volumes. They do share the host port
-# unless you set APP_PORT (default {{ '8001' if env_suffix == 'stage' else '8000' }} here).
+# same checkout without sharing containers or volumes.{% if proxy_network %}
+#
+# `app` publishes no host port: it joins the external Docker network `{{ proxy_network }}` under
+# the alias `{{ app_slug }}-{{ env_suffix }}`, and the reverse proxy attached to that network routes the
+# domain to http://{{ app_slug }}-{{ env_suffix }}:80. Create the network once, before the first `up`:
+#   docker network create {{ proxy_network }}
+# Only `app` joins it; every other service stays on this stack's own network. Staging
+# and production can join the same network at once, since their aliases differ.{% else %} They do share the host port
+# unless you set APP_PORT (default {{ '8001' if env_suffix == 'stage' else '8000' }} here).{% endif %}
 #
 # Where the ${VAR} placeholders come from: the shell environment, or an env file —
 # the one given with `--env-file <path>`, otherwise a file named exactly `.env` next
@@ -107,8 +114,21 @@ services:
     build: .
     container_name: {{ app_slug }}_app_{{ env_suffix }}
     restart: unless-stopped
+{%- if proxy_network %}
+    # No published port: the reverse proxy on the `{{ proxy_network }}` network reaches this
+    # container at http://{{ app_slug }}-{{ env_suffix }}:80, the alias below. Not at `app`: Compose registers
+    # the service name on the shared network too, so there it matches every project's `app`.
+    # Listing `networks` replaces the implicit default network, so `default` is joined
+    # explicitly (the database, Redis and the worker are reached through it).
+    networks:
+      default:
+      proxy:
+        aliases:
+          - {{ app_slug }}-{{ env_suffix }}
+{%- else %}
     ports:
       - "${APP_PORT:-{{ '8001' if env_suffix == 'stage' else '8000' }}}:80"
+{%- endif %}
 {% if db != 'sqlite' or queue == 'redis' %}
     depends_on:
 {% if db != 'sqlite' %}
@@ -297,3 +317,14 @@ volumes:
 {% if queue == 'redis' %}
   redis_data:
 {% endif %}
+{%- if proxy_network %}
+
+# `proxy` is this file's name for the network the reverse proxy is attached to. It
+# already exists (`docker network create {{ proxy_network }}`) and is not owned by this
+# project, so `down` leaves it alone and the name is not prefixed with the project name.
+networks:
+  default:
+  proxy:
+    name: {{ proxy_network | yaml_quote }}
+    external: true
+{%- endif %}
